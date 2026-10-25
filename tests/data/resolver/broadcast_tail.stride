@@ -1,0 +1,16 @@
+platformModule IsZero {
+    inputs: [_IntType]
+    outputs: [_SwitchType]
+    processing: "%%outtokens:0%% = llvm::icmp eq %%intokens:0%%, 0"
+}
+
+signal Values[3] { type: _IntType }
+switch Zero[3] {}
+switch AllZero {}
+switch AllZeroDirect {}
+
+# The stream continues after the outputs of a multi-instance function
+Values[0:2] >> IsZero[]() >> Zero[0:2] >> AllOn() >> AllZero;
+
+# A single instance function after a multi-instance one takes all its outputs
+Values[0:2] >> IsZero[]() >> AllOn() >> AllZeroDirect;

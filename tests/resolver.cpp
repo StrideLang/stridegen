@@ -37,6 +37,7 @@
 // #include "stride/codegen/stridelibrary.hpp"
 
 #include <fstream>
+#include <functional>
 
 using namespace strd;
 
@@ -403,6 +404,81 @@ TEST(Resolver, ReadOnlyPortAttributes) {
     }
   }
   EXPECT_EQ(readOnlyErrors, 1);
+}
+
+TEST(Resolver, MultiInstanceStreamContinues) {
+  auto strideroot = ASTFunctions::getDefaultStrideRoot();
+  ASTNode tree =
+      AST::parseFile(TESTS_SOURCE_DIR "resolver/broadcast_tail.stride");
+  ASSERT_TRUE(tree != nullptr);
+  tree->addChild(
+      std::make_shared<SystemNode>("JIT", 1, 0, __FILE__, __LINE__));
+  ASTFunctions::preprocess(tree);
+
+  CodeResolver resolver(tree, strideroot);
+  resolver.process();
+
+  std::function<bool(ASTNode, const std::string &)> containsName =
+      [&](ASTNode node, const std::string &name) {
+        if (!node) {
+          return false;
+        }
+        if ((node->getNodeType() == AST::Function ||
+             node->getNodeType() == AST::Entity ||
+             node->getNodeType() == AST::Array) &&
+            ASTQuery::getNodeName(node) == name) {
+          return true;
+        }
+        if (node->getNodeType() == AST::Stream) {
+          auto stream = std::static_pointer_cast<StreamNode>(node);
+          return containsName(stream->getLeft(), name) ||
+                 containsName(stream->getRight(), name);
+        }
+        for (const auto &child : node->getChildren()) {
+          if (containsName(child, name)) {
+            return true;
+          }
+        }
+        return false;
+      };
+
+  int isZeroStreams = 0;
+  int allZeroStreams = 0;
+  int allZeroDirectStreams = 0;
+  for (const auto &node : tree->getChildren()) {
+    if (node->getNodeType() != AST::Stream) {
+      continue;
+    }
+    if (containsName(node, "IsZero")) {
+      isZeroStreams++;
+      // Each instance only writes its output, the rest of the stream is
+      // a separate stream
+      EXPECT_FALSE(containsName(node, "AllOn"));
+    }
+    if (containsName(node, "AllZero")) {
+      allZeroStreams++;
+      EXPECT_TRUE(containsName(node, "Zero"));
+    }
+    if (containsName(node, "AllZeroDirect")) {
+      allZeroDirectStreams++;
+    }
+  }
+  EXPECT_EQ(isZeroStreams, 6); // 3 instances in each stream
+  EXPECT_EQ(allZeroStreams, 1);
+  EXPECT_EQ(allZeroDirectStreams, 1);
+
+  // The instance outputs of the second stream go to a declared bundle, a
+  // switch as IsZero outputs _SwitchType
+  std::shared_ptr<DeclarationNode> bundle;
+  for (const auto &node : tree->getChildren()) {
+    if (node->getNodeType() == AST::ArrayDeclaration &&
+        std::static_pointer_cast<DeclarationNode>(node)->getName().rfind(
+            "__IsZero_Out", 0) == 0) {
+      bundle = std::static_pointer_cast<DeclarationNode>(node);
+    }
+  }
+  ASSERT_TRUE(bundle);
+  EXPECT_EQ(bundle->getEntityType(), "switch");
 }
 
 TEST(Resolver, SelfPort) {

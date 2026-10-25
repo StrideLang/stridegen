@@ -997,9 +997,12 @@ static ASTNode expandRangesInASTNode(ASTNode node, const ScopeStack &scope,
   return node;
 }
 
-static std::vector<ASTNode>
-expandSingleIndexedStream(std::shared_ptr<StreamNode> stream,
-                          const ScopeStack &scope, ASTNode tree) {
+// Expands a stream through a multi-instance function (F[]()) into one stream
+// per instance. Bundles the caller must declare (name, size) to hold the
+// instance outputs are appended to newBundles.
+static std::vector<ASTNode> expandSingleIndexedStream(
+    std::shared_ptr<StreamNode> stream, const ScopeStack &scope, ASTNode tree,
+    std::vector<std::pair<std::string, int64_t>> &newBundles) {
   if (!stream)
     return {};
 
@@ -1071,6 +1074,26 @@ expandSingleIndexedStream(std::shared_ptr<StreamNode> stream,
       subStream->setRight(outNode);
     }
     return {};
+  }
+
+  // The stream may continue after the instance outputs, e.g.
+  //   In >> F[]() >> Out[0:8] >> G() >> X;  or  In >> F[]() >> G() >> X;
+  // Each instance writes one element of Out (or of a new bundle when a
+  // function follows), and one more stream continues from the whole bundle.
+  ASTNode tailHead = nullptr;
+  ASTNode tailRest = nullptr;
+  if (outNode && outNode->getNodeType() == AST::Stream) {
+    auto tail = std::static_pointer_cast<StreamNode>(outNode);
+    tailHead = tail->getLeft();
+    tailRest = tail->getRight();
+  } else if (outNode && outNode->getNodeType() == AST::Function) {
+    tailHead = outNode;
+  }
+  const bool outputsToBundle =
+      tailHead && tailHead->getNodeType() == AST::Function;
+  if (tailHead) {
+    outNode = outputsToBundle ? nullptr
+                              : expandRangesInASTNode(tailHead, scope, tree);
   }
 
   int64_t N = 0;
@@ -1202,6 +1225,34 @@ expandSingleIndexedStream(std::shared_ptr<StreamNode> stream,
   int64_t currentGroupId = ++s_parallelGroupId;
   std::string originFuncName = funcNode->getName();
 
+  // Bundle holding the instance outputs when a function follows them
+  std::shared_ptr<ListNode> bundleElements;
+  if (outputsToBundle) {
+    std::string bundleName = "__" + originFuncName + "_Out" +
+                             std::to_string(currentGroupId);
+    newBundles.push_back({bundleName, N});
+    bundleElements = std::make_shared<ListNode>(
+        nullptr, stream->getFilename().c_str(), stream->getLine());
+    for (int64_t i = 0; i < N; ++i) {
+      ASTNode element;
+      if (N == 1) {
+        // createSignalDeclaration declares a scalar for size 1
+        element = std::make_shared<EntityNode>(
+            bundleName, stream->getFilename().c_str(), stream->getLine());
+      } else {
+        auto indexList = std::make_shared<ListNode>(
+            std::make_shared<ValueNode>(i, stream->getFilename().c_str(),
+                                        stream->getLine()),
+            stream->getFilename().c_str(), stream->getLine());
+        element = std::make_shared<ArrayNode>(bundleName, indexList,
+                                              stream->getFilename().c_str(),
+                                              stream->getLine());
+      }
+      instanceOutputs[i] = element;
+      bundleElements->addChild(element->deepCopy());
+    }
+  }
+
   std::vector<ASTNode> expandedStreams;
   expandedStreams.reserve(N);
   for (int64_t i = 0; i < N; ++i) {
@@ -1227,7 +1278,7 @@ expandSingleIndexedStream(std::shared_ptr<StreamNode> stream,
             originFuncName, stream->getFilename().c_str(), stream->getLine()));
 
     ASTNode singleStream;
-    if (outNode) {
+    if (instanceOutputs[i]) {
       auto sub = std::make_shared<StreamNode>(funcClone, instanceOutputs[i],
                                               stream->getFilename().c_str(),
                                               stream->getLine());
@@ -1260,11 +1311,60 @@ expandSingleIndexedStream(std::shared_ptr<StreamNode> stream,
     expandedStreams.push_back(singleStream);
   }
 
+  // Continue the stream from the whole output bundle
+  if (outputsToBundle || tailRest) {
+    std::shared_ptr<StreamNode> continuation;
+    if (outputsToBundle) {
+      ASTNode rest = tailHead;
+      if (tailRest) {
+        rest = std::make_shared<StreamNode>(tailHead, tailRest,
+                                            stream->getFilename().c_str(),
+                                            stream->getLine());
+      }
+      continuation = std::make_shared<StreamNode>(
+          bundleElements, rest, stream->getFilename().c_str(),
+          stream->getLine());
+    } else {
+      continuation = std::make_shared<StreamNode>(
+          tailHead, tailRest, stream->getFilename().c_str(),
+          stream->getLine());
+    }
+    // The continuation may itself go through a multi-instance function
+    auto expandedContinuation =
+        expandSingleIndexedStream(continuation, scope, tree, newBundles);
+    if (expandedContinuation.empty()) {
+      expandedStreams.push_back(continuation);
+    } else {
+      expandedStreams.insert(expandedStreams.end(),
+                             expandedContinuation.begin(),
+                             expandedContinuation.end());
+    }
+  }
+
   return expandedStreams;
 }
 
 void CodeResolver::expandIndexedStreams() {
-  std::function<void(ASTNode)> processContainer = [&](ASTNode container) {
+  // Bundles for instance outputs are declared in the blocks of the
+  // declaration owning the streams, or in the root if it has no blocks.
+  std::vector<ASTNode> rootDeclarations;
+  auto declareBundles =
+      [&](const std::vector<std::pair<std::string, int64_t>> &bundles,
+          std::shared_ptr<DeclarationNode> owner) {
+        for (const auto &[name, size] : bundles) {
+          auto bundle = createSignalDeclaration(name, size, {}, m_tree);
+          auto blocks = owner ? owner->getPropertyValue("blocks") : nullptr;
+          if (blocks && blocks->getNodeType() == AST::List) {
+            blocks->addChild(bundle);
+          } else {
+            rootDeclarations.push_back(bundle);
+          }
+        }
+      };
+
+  std::function<void(ASTNode, std::shared_ptr<DeclarationNode>)>
+      processContainer = [&](ASTNode container,
+                             std::shared_ptr<DeclarationNode> owner) {
     if (!container)
       return;
     auto children = container->getChildren();
@@ -1274,7 +1374,10 @@ void CodeResolver::expandIndexedStreams() {
     for (const auto &child : children) {
       if (child->getNodeType() == AST::Stream) {
         auto stream = std::static_pointer_cast<StreamNode>(child);
-        auto expanded = expandSingleIndexedStream(stream, {}, m_tree);
+        std::vector<std::pair<std::string, int64_t>> newBundles;
+        auto expanded =
+            expandSingleIndexedStream(stream, {}, m_tree, newBundles);
+        declareBundles(newBundles, owner);
         if (!expanded.empty()) {
           newChildren.insert(newChildren.end(), expanded.begin(),
                              expanded.end());
@@ -1294,11 +1397,14 @@ void CodeResolver::expandIndexedStreams() {
             auto streams = decl->getPropertyValue(propName);
             if (streams) {
               if (streams->getNodeType() == AST::List) {
-                processContainer(streams);
+                processContainer(streams, decl);
               } else if (streams->getNodeType() == AST::Stream) {
                 auto stream = std::static_pointer_cast<StreamNode>(streams);
-                auto expanded = expandSingleIndexedStream(stream, {}, m_tree);
-                if (expanded.size() > 1) {
+                std::vector<std::pair<std::string, int64_t>> newBundles;
+                auto expanded =
+                    expandSingleIndexedStream(stream, {}, m_tree, newBundles);
+                declareBundles(newBundles, decl);
+                if (!expanded.empty()) {
                   auto newStreamsList = std::make_shared<ListNode>(
                       nullptr, streams->getFilename().c_str(),
                       streams->getLine());
@@ -1314,7 +1420,7 @@ void CodeResolver::expandIndexedStreams() {
             if (p->getValue() && p->getValue()->getNodeType() == AST::List) {
               for (const auto &item : p->getValue()->getChildren()) {
                 if (item->getNodeType() == AST::Declaration) {
-                  processContainer(p->getValue());
+                  processContainer(p->getValue(), decl);
                   break;
                 }
               }
@@ -1328,7 +1434,10 @@ void CodeResolver::expandIndexedStreams() {
     }
   };
 
-  processContainer(m_tree);
+  processContainer(m_tree, nullptr);
+  for (const auto &decl : rootDeclarations) {
+    m_tree->addChild(decl);
+  }
 }
 
 void CodeResolver::expandParallel() {
