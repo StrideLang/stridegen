@@ -8,10 +8,10 @@ _domainDefinition TestDomain {
     substitutions: [ ]
     domainIncludes: []
     inputs: [
-        signal In { domain: TestDomain type: _RealType}
+        signal In { domain: TestDomain type: Real}
     ]
     outputs: [
-        signal Out { domain: TestDomain type: _RealType}
+        signal Out { domain: TestDomain type: Real}
     ]
 	domainFunctionCode: ''
 }
@@ -35,7 +35,7 @@ module Mod {
     ]
 }
 
-signal Value { type: _RealType domain: TestDomain }
+signal Value { type: Real domain: TestDomain }
 
 In >> Mod() >> Value;
 Value >> Out;

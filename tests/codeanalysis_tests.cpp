@@ -52,13 +52,13 @@ TEST(CodeAnalysis, TypeTree) {
 
   ASSERT_EQ(typeTree.internal.size(), 4);
   EXPECT_EQ(ASTQuery::getNodeName(typeTree.internal[0].first), "Input");
-  EXPECT_EQ(typeTree.internal[0].second, "_IntType");
+  EXPECT_EQ(typeTree.internal[0].second, "Int");
   EXPECT_EQ(ASTQuery::getNodeName(typeTree.internal[1].first), "Output");
-  EXPECT_EQ(typeTree.internal[1].second, "_IntType");
+  EXPECT_EQ(typeTree.internal[1].second, "Int");
   EXPECT_EQ(ASTQuery::getNodeName(typeTree.internal[2].first), "ListInput");
-  EXPECT_EQ(typeTree.internal[2].second, "_IntType");
+  EXPECT_EQ(typeTree.internal[2].second, "Int");
   EXPECT_EQ(ASTQuery::getNodeName(typeTree.internal[3].first), "ListOutput");
-  EXPECT_EQ(typeTree.internal[3].second, "_IntType");
+  EXPECT_EQ(typeTree.internal[3].second, "Int");
 
   ASSERT_EQ(typeTree.nodes.size(), 1);
   EXPECT_EQ(ASTQuery::getNodeName(typeTree.nodes[0].instance), "Mod");
@@ -88,13 +88,13 @@ TEST(CodeAnalysis, TypeTreeModuleNested) {
 
   ASSERT_EQ(typeTree.internal.size(), 4);
   EXPECT_EQ(ASTQuery::getNodeName(typeTree.internal[0].first), "NestedInput");
-  EXPECT_EQ(typeTree.internal[0].second, "_IntType");
+  EXPECT_EQ(typeTree.internal[0].second, "Int");
   EXPECT_EQ(ASTQuery::getNodeName(typeTree.internal[1].first), "NestedOutput");
-  EXPECT_EQ(typeTree.internal[1].second, "_IntType");
+  EXPECT_EQ(typeTree.internal[1].second, "Int");
   EXPECT_EQ(ASTQuery::getNodeName(typeTree.internal[2].first), "Input");
-  EXPECT_EQ(typeTree.internal[2].second, "_IntType");
+  EXPECT_EQ(typeTree.internal[2].second, "Int");
   EXPECT_EQ(ASTQuery::getNodeName(typeTree.internal[3].first), "Output");
-  EXPECT_EQ(typeTree.internal[3].second, "_IntType");
+  EXPECT_EQ(typeTree.internal[3].second, "Int");
 
   ASSERT_EQ(typeTree.nodes.size(), 4);
 
@@ -194,9 +194,9 @@ TEST(CodeAnalysis, TypeTreePlatform) {
 
   ASSERT_EQ(typeTree.internal.size(), 2);
   EXPECT_EQ(ASTQuery::getNodeName(typeTree.internal[0].first), "Input");
-  EXPECT_EQ(typeTree.internal[0].second, "_RealType");
+  EXPECT_EQ(typeTree.internal[0].second, "Real");
   EXPECT_EQ(ASTQuery::getNodeName(typeTree.internal[1].first), "Output");
-  EXPECT_EQ(typeTree.internal[1].second, "_SwitchType");
+  EXPECT_EQ(typeTree.internal[1].second, "Switch");
 
   ASSERT_EQ(typeTree.nodes.size(), 1);
 
@@ -223,13 +223,13 @@ TEST(CodeAnalysis, TypeTreeDomain) {
 
   ASSERT_EQ(domainTreeNode->external.size(), 2);
   EXPECT_EQ(ASTQuery::getNodeName(domainTreeNode->external[0].first), "Out");
-  EXPECT_EQ(domainTreeNode->external[0].second, "_RealType");
+  EXPECT_EQ(domainTreeNode->external[0].second, "Real");
   EXPECT_EQ(ASTQuery::getNodeName(domainTreeNode->external[1].first), "In");
-  EXPECT_EQ(domainTreeNode->external[1].second, "_RealType");
+  EXPECT_EQ(domainTreeNode->external[1].second, "Real");
 
   ASSERT_EQ(domainTreeNode->internal.size(), 1);
   EXPECT_EQ(ASTQuery::getNodeName(domainTreeNode->internal[0].first), "Value");
-  EXPECT_EQ(domainTreeNode->internal[0].second, "_RealType");
+  EXPECT_EQ(domainTreeNode->internal[0].second, "Real");
 }
 
 TEST(CodeAnalysis, TypeTreeGetParentTreeForNode) {
@@ -495,11 +495,11 @@ TEST(CodeAnalysis, MatchDefinitionToTypesOverloadResolution) {
 
   // Equal candidates: Equal@String_Bool is placed FIRST to verify ordering independence
   auto equalString =
-      makePlatformModule("Equal@String_Bool", {"_StringType", "_StringType"});
+      makePlatformModule("Equal@String_Bool", {"String", "String"});
   auto equalDouble =
-      makePlatformModule("Equal@Double_Bool", {"_RealType", "_RealType"});
+      makePlatformModule("Equal@Double_Bool", {"Real", "Real"});
   auto equalInt =
-      makePlatformModule("Equal@Int_Bool", {"_IntType", "_IntType"});
+      makePlatformModule("Equal@Int_Bool", {"Int", "Int"});
 
   std::vector<std::shared_ptr<DeclarationNode>> candidates = {equalString,
                                                               equalDouble,
@@ -519,7 +519,7 @@ TEST(CodeAnalysis, MatchDefinitionToTypesOverloadResolution) {
     EXPECT_EQ(matched->getName(), "Equal@Double_Bool");
   }
 
-  // 2. Real + Int inputs with Int marked with "typecast" = "_RealType" -> matches Equal@Double_Bool
+  // 2. Real + Int inputs with Int marked with "typecast" = "Real" -> matches Equal@Double_Bool
   {
     auto func =
         std::make_shared<FunctionNode>("Equal", nullptr, __FILE__, __LINE__);
@@ -528,7 +528,7 @@ TEST(CodeAnalysis, MatchDefinitionToTypesOverloadResolution) {
     auto intElem = std::make_shared<ValueNode>(int64_t(0), __FILE__, __LINE__);
     intElem->setCompilerProperty(
         "typecast",
-        std::make_shared<ValueNode>("_RealType", __FILE__, __LINE__));
+        std::make_shared<ValueNode>("Real", __FILE__, __LINE__));
     inputList->addChild(intElem);
     func->setCompilerProperty("mainInput", inputList);
 
@@ -587,8 +587,8 @@ TEST(CodeAnalysis, MatchDefinitionToTypesOverloadResolution) {
   // 6. Single input overload: Overload@Double vs Overload@Int
   {
     auto overloadDouble =
-        makePlatformModule("Overload@Double", {"_RealType"});
-    auto overloadInt = makePlatformModule("Overload@Int", {"_IntType"});
+        makePlatformModule("Overload@Double", {"Real"});
+    auto overloadInt = makePlatformModule("Overload@Int", {"Int"});
     std::vector<std::shared_ptr<DeclarationNode>> unaryCandidates = {
         overloadDouble, overloadInt};
 
@@ -617,7 +617,7 @@ TEST(CodeAnalysis, MatchDefinitionToTypesOverloadResolution) {
     auto signalDecl = std::make_shared<DeclarationNode>(
         "MyRealSignal", "signal", nullptr, __FILE__, __LINE__);
     signalDecl->addProperty(std::make_shared<PropertyNode>(
-        "type", std::make_shared<EntityNode>("_RealType", __FILE__, __LINE__),
+        "type", std::make_shared<EntityNode>("Real", __FILE__, __LINE__),
         __FILE__, __LINE__));
 
     auto entityNode =
@@ -642,23 +642,23 @@ TEST(CodeAnalysis, GeneratorRangeDataType) {
   auto start = std::make_shared<ValueNode>(int64_t(0), __FILE__, __LINE__);
   auto end = std::make_shared<ValueNode>(int64_t(8), __FILE__, __LINE__);
   auto genNode = std::make_shared<GeneratorRangeNode>(start, end, __FILE__, __LINE__);
-  EXPECT_EQ(CodeAnalysis::resolveNodeOutDataType(genNode, ScopeStack(), nullptr), "_IntType");
+  EXPECT_EQ(CodeAnalysis::resolveNodeOutDataType(genNode, ScopeStack(), nullptr), "Int");
 
   // Stepped GeneratorRangeNode
   auto step = std::make_shared<ValueNode>(int64_t(2), __FILE__, __LINE__);
   auto genStepped = std::make_shared<GeneratorRangeNode>(start, step, end, __FILE__, __LINE__);
-  EXPECT_EQ(CodeAnalysis::resolveNodeOutDataType(genStepped, ScopeStack(), nullptr), "_IntType");
+  EXPECT_EQ(CodeAnalysis::resolveNodeOutDataType(genStepped, ScopeStack(), nullptr), "Int");
 
   // ListNode containing GeneratorRangeNode
   auto listNode = std::make_shared<ListNode>(__FILE__, __LINE__);
   listNode->addChild(genNode);
-  EXPECT_EQ(CodeAnalysis::resolveNodeOutDataType(listNode, ScopeStack(), nullptr), "_IntType");
+  EXPECT_EQ(CodeAnalysis::resolveNodeOutDataType(listNode, ScopeStack(), nullptr), "Int");
 
   // ListNode containing mixed int and GeneratorRangeNode
   auto mixedList = std::make_shared<ListNode>(__FILE__, __LINE__);
   mixedList->addChild(std::make_shared<ValueNode>(int64_t(1), __FILE__, __LINE__));
   mixedList->addChild(genNode);
-  EXPECT_EQ(CodeAnalysis::resolveNodeOutDataType(mixedList, ScopeStack(), nullptr), "_IntType");
+  EXPECT_EQ(CodeAnalysis::resolveNodeOutDataType(mixedList, ScopeStack(), nullptr), "Int");
 }
 
 

@@ -109,7 +109,7 @@ TEST(Resolver, ResolveTypes) {
     // Not resolved from connections: default from the type class
     ASSERT_EQ(dataType->getNodeType(), AST::Entity);
     EXPECT_EQ(std::static_pointer_cast<EntityNode>(dataType)->getName(),
-              "_RealType");
+              "Real");
   }
   {
     auto decl = ASTQuery::findDeclarationByName("ForwardModuleOutResolved",
@@ -120,7 +120,7 @@ TEST(Resolver, ResolveTypes) {
     EXPECT_EQ(dataType->getNodeType(), AST::Entity);
     // FIXME
     // EXPECT_EQ(std::static_pointer_cast<EntityNode>(dataType)->getName(),
-    //           "_IntType");
+    //           "Int");
   }
   {
     auto decl = ASTQuery::findDeclarationByName("ForwardModuleInNotResolved",
@@ -131,7 +131,7 @@ TEST(Resolver, ResolveTypes) {
     // Not resolved from connections: default from the type class
     ASSERT_EQ(dataType->getNodeType(), AST::Entity);
     EXPECT_EQ(std::static_pointer_cast<EntityNode>(dataType)->getName(),
-              "_RealType");
+              "Real");
   }
   // ModuleIn >> PassThrough() >> ModuleOut; # nothing should be resolved here
   // ModuleInInt >> PassThrough() >> ModuleOutNotResolved; # forward resolve,
@@ -146,7 +146,7 @@ TEST(Resolver, ResolveTypes) {
     // Not resolved from connections: default from the type class
     ASSERT_EQ(dataType->getNodeType(), AST::Entity);
     EXPECT_EQ(std::static_pointer_cast<EntityNode>(dataType)->getName(),
-              "_RealType");
+              "Real");
   }
   {
     auto decl = ASTQuery::findDeclarationByName("ModuleOutNotResolved",
@@ -157,7 +157,7 @@ TEST(Resolver, ResolveTypes) {
     // Not resolved from connections: default from the type class
     ASSERT_EQ(dataType->getNodeType(), AST::Entity);
     EXPECT_EQ(std::static_pointer_cast<EntityNode>(dataType)->getName(),
-              "_RealType");
+              "Real");
   }
   {
     auto decl =
@@ -167,7 +167,7 @@ TEST(Resolver, ResolveTypes) {
     EXPECT_TRUE(dataType);
     EXPECT_EQ(dataType->getNodeType(), AST::Entity);
     EXPECT_EQ(std::static_pointer_cast<EntityNode>(dataType)->getName(),
-              "_IntType");
+              "Int");
   }
   // ModuleInInt >> PassThroughWithType() >> ModuleWithTypeOutResolved;
   // ModuleWithTypeInResolved >> PassThroughWithType() >> ModuleOutInt;
@@ -179,7 +179,7 @@ TEST(Resolver, ResolveTypes) {
     EXPECT_TRUE(dataType);
     EXPECT_EQ(dataType->getNodeType(), AST::Entity);
     EXPECT_EQ(std::static_pointer_cast<EntityNode>(dataType)->getName(),
-              "_RealType");
+              "Real");
   }
   {
     auto decl = ASTQuery::findDeclarationByName("ModuleWithTypeInResolved",
@@ -189,7 +189,7 @@ TEST(Resolver, ResolveTypes) {
     EXPECT_TRUE(dataType);
     EXPECT_EQ(dataType->getNodeType(), AST::Entity);
     EXPECT_EQ(std::static_pointer_cast<EntityNode>(dataType)->getName(),
-              "_RealType");
+              "Real");
   }
   // Forward resolution
   {
@@ -199,7 +199,7 @@ TEST(Resolver, ResolveTypes) {
     EXPECT_TRUE(dataType);
     EXPECT_EQ(dataType->getNodeType(), AST::Entity);
     EXPECT_EQ(std::static_pointer_cast<EntityNode>(dataType)->getName(),
-              "_IntType");
+              "Int");
   }
   {
     auto decl = ASTQuery::findDeclarationByName("Input", ScopeStack(), tree);
@@ -208,7 +208,7 @@ TEST(Resolver, ResolveTypes) {
     EXPECT_TRUE(dataType);
     EXPECT_EQ(dataType->getNodeType(), AST::Entity);
     EXPECT_EQ(std::static_pointer_cast<EntityNode>(dataType)->getName(),
-              "_IntType");
+              "Int");
   }
   {
     auto decl = ASTQuery::findDeclarationByName("OutputB2", ScopeStack(), tree);
@@ -217,7 +217,7 @@ TEST(Resolver, ResolveTypes) {
     EXPECT_TRUE(dataType);
     EXPECT_EQ(dataType->getNodeType(), AST::Entity);
     EXPECT_EQ(std::static_pointer_cast<EntityNode>(dataType)->getName(),
-              "_IntType");
+              "Int");
   }
   {
     auto decl = ASTQuery::findDeclarationByName("InputA2", ScopeStack(), tree);
@@ -226,7 +226,7 @@ TEST(Resolver, ResolveTypes) {
     EXPECT_TRUE(dataType);
     EXPECT_EQ(dataType->getNodeType(), AST::Entity);
     EXPECT_EQ(std::static_pointer_cast<EntityNode>(dataType)->getName(),
-              "_IntType");
+              "Int");
   }
   // Bundles
   {
@@ -237,7 +237,7 @@ TEST(Resolver, ResolveTypes) {
     EXPECT_TRUE(dataType);
     EXPECT_EQ(dataType->getNodeType(), AST::Entity);
     EXPECT_EQ(std::static_pointer_cast<EntityNode>(dataType)->getName(),
-              "_IntType");
+              "Int");
   }
   {
     auto decl =
@@ -247,7 +247,7 @@ TEST(Resolver, ResolveTypes) {
     EXPECT_TRUE(dataType);
     EXPECT_EQ(dataType->getNodeType(), AST::Entity);
     EXPECT_EQ(std::static_pointer_cast<EntityNode>(dataType)->getName(),
-              "_IntType");
+              "Int");
   }
   {
     auto decl = ASTQuery::findDeclarationByName("OutputBundleMember",
@@ -257,7 +257,7 @@ TEST(Resolver, ResolveTypes) {
     EXPECT_TRUE(dataType);
     ASSERT_EQ(dataType->getNodeType(), AST::Entity);
     EXPECT_EQ(std::static_pointer_cast<EntityNode>(dataType)->getName(),
-              "_IntType");
+              "Int");
   }
   {
     auto decl = ASTQuery::findDeclarationByName("InputBundleMember",
@@ -267,7 +267,7 @@ TEST(Resolver, ResolveTypes) {
     EXPECT_TRUE(dataType);
     EXPECT_EQ(dataType->getNodeType(), AST::Entity);
     EXPECT_EQ(std::static_pointer_cast<EntityNode>(dataType)->getName(),
-              "_IntType");
+              "Int");
   }
 
   // ModuleIn >> PassThrough() >> ModuleOut; # nothing should be resolved here
@@ -282,7 +282,7 @@ TEST(Resolver, ResolveTypes) {
     // Not resolved from connections: default from the type class
     ASSERT_EQ(dataType->getNodeType(), AST::Entity);
     EXPECT_EQ(std::static_pointer_cast<EntityNode>(dataType)->getName(),
-              "_RealType");
+              "Real");
   }
   {
     auto decl = ASTQuery::findDeclarationByName("ModuleIn", ScopeStack(), tree);
@@ -292,7 +292,7 @@ TEST(Resolver, ResolveTypes) {
     // Not resolved from connections: default from the type class
     ASSERT_EQ(dataType->getNodeType(), AST::Entity);
     EXPECT_EQ(std::static_pointer_cast<EntityNode>(dataType)->getName(),
-              "_RealType");
+              "Real");
   }
 }
 
@@ -316,7 +316,7 @@ TEST(Resolver, TypeClassDefaults) {
     auto dataType = decl->getPropertyValue("type");
     ASSERT_TRUE(dataType);
     ASSERT_EQ(dataType->getNodeType(), AST::Entity);
-    EXPECT_EQ(ASTQuery::getNodeName(dataType), "_RealType");
+    EXPECT_EQ(ASTQuery::getNodeName(dataType), "Real");
   }
   {
     auto decl =
@@ -324,7 +324,7 @@ TEST(Resolver, TypeClassDefaults) {
     ASSERT_TRUE(decl);
     auto dataType = decl->getPropertyValue("type");
     ASSERT_TRUE(dataType);
-    EXPECT_EQ(ASTQuery::getNodeName(dataType), "_IntType");
+    EXPECT_EQ(ASTQuery::getNodeName(dataType), "Int");
   }
   {
     // switch has a builtin data type and no type property
@@ -332,7 +332,7 @@ TEST(Resolver, TypeClassDefaults) {
     ASSERT_TRUE(decl);
     EXPECT_FALSE(decl->getPropertyValue("type"));
   }
-  // Undeclared blocks receiving _SwitchType are declared as switches
+  // Undeclared blocks receiving Switch are declared as switches
   for (const auto &name :
        {"AutoSwitch", "AutoSwitchFromFlag", "AutoSwitchFromPlatform"}) {
     auto decl = ASTQuery::findDeclarationByName(name, ScopeStack(), tree);
@@ -356,8 +356,8 @@ TEST(Resolver, TypeClassRejectsNonMember) {
   CodeResolver resolver(tree, strideroot);
   resolver.process();
 
-  // Only "signal SwitchSignal { type: _SwitchType }" is invalid, as
-  // _SwitchType is not a member of _NumericTypes
+  // Only "signal SwitchSignal { type: Switch }" is invalid, as
+  // Switch is not a member of _NumericTypes
   auto errors = ASTValidation::validate(tree);
   int typeErrors = 0;
   int unresolvedErrors = 0;
@@ -365,7 +365,7 @@ TEST(Resolver, TypeClassRejectsNonMember) {
     if (error.type == LangError::InvalidPortType &&
         error.errorTokens.size() == 4 && error.errorTokens[1] == "type") {
       EXPECT_EQ(error.errorTokens[0], "signal");
-      EXPECT_NE(error.errorTokens[3].find("_RealType"), std::string::npos);
+      EXPECT_NE(error.errorTokens[3].find("Real"), std::string::npos);
       typeErrors++;
     } else if (error.type == LangError::UnresolvedType) {
       // FromOutput takes its output type from its output port
@@ -468,7 +468,7 @@ TEST(Resolver, MultiInstanceStreamContinues) {
   EXPECT_EQ(allZeroDirectStreams, 1);
 
   // The instance outputs of the second stream go to a declared bundle, a
-  // switch as IsZero outputs _SwitchType
+  // switch as IsZero outputs Switch
   std::shared_ptr<DeclarationNode> bundle;
   for (const auto &node : tree->getChildren()) {
     if (node->getNodeType() == AST::ArrayDeclaration &&

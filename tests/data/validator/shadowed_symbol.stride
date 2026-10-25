@@ -1,5 +1,5 @@
 switch Flag { default: on }
-signal Count { default: 0 type: _IntType }
+signal Count { default: 0 type: Int }
 signal Level { default: 0.0 }
 
 # A reaction shares its domain's state, so its block Flag hides the global.
@@ -16,7 +16,7 @@ reaction ShadowingReaction {
 # Loops are also domain members, so Count hides the global.
 loop ShadowingLoop {
     blocks: [
-        signal Count { default: 0 type: _IntType }
+        signal Count { default: 0 type: Int }
         switch Done {}
     ]
     terminateWhen: Done

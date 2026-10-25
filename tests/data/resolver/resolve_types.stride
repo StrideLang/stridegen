@@ -20,8 +20,8 @@ module PassThroughForward {
 
 signal ForwardModuleIn {}
 signal ForwardModuleOut {}
-signal ForwardModuleInInt { type: _IntType}
-signal ForwardModuleOutInt { type: _IntType}
+signal ForwardModuleInInt { type: Int}
+signal ForwardModuleOutInt { type: Int}
 signal ForwardModuleOutResolved {}
 signal ForwardModuleInResolved {}
 signal ForwardModuleInNotResolved {}
@@ -52,8 +52,8 @@ module PassThrough {
 
 signal ModuleIn {}
 signal ModuleOut {}
-signal ModuleInInt { type: _IntType}
-signal ModuleOutInt { type: _IntType}
+signal ModuleInInt { type: Int}
+signal ModuleOutInt { type: Int}
 signal ModuleOutNotResolved {}
 signal ModuleInResolved {}
 
@@ -73,16 +73,16 @@ module PassThroughWithType {
         }
     ]
     blocks: [
-        signal Input { type: _RealType }
-        signal Output { type: _RealType }
+        signal Input { type: Real }
+        signal Output { type: Real }
     ]
     streams: [
         Input >> Output;
     ]
 }
 
-signal ModuleInInt { type: _IntType}
-signal ModuleOutInt { type: _IntType}
+signal ModuleInInt { type: Int}
+signal ModuleOutInt { type: Int}
 signal ModuleWithTypeOutResolved {}
 signal ModuleWithTypeInResolved {}
 
@@ -91,26 +91,26 @@ ModuleWithTypeInResolved >> PassThroughWithType() >> ModuleOutInt;
 
 ####################
 # Forward resolution
-signal IntInput { type: _IntType }
+signal IntInput { type: Int }
 signal Output {}
 
 IntInput >> Output;
 
 # Reverse resolution
-signal IntOutput { type: _IntType}
+signal IntOutput { type: Int}
 signal Input {}
 
 Input >> IntOutput;
 
 # Forward resolution recursive
-signal IntInput2 { type: _IntType}
+signal IntInput2 { type: Int}
 signal OutputA2 {}
 signal OutputB2 {}
 
 IntInput2 >> OutputA2 >> OutputB2;
 
 # Reverse resolution recursive
-signal IntOutput2 { type: _IntType}
+signal IntOutput2 { type: Int}
 signal InputA2 {}
 signal InputB2 {}
 
@@ -118,25 +118,25 @@ InputA2 >> InputB2 >> IntOutput2;
 
 ###########################
 # Forward resolution bundle
-signal IntInputBundle[2] { type: _IntType }
+signal IntInputBundle[2] { type: Int }
 signal OutputBundle[2] {}
 
 IntInputBundle >> OutputBundle;
 
 # Reverse resolution bundle
-signal IntOutputBundle { type: _IntType}
+signal IntOutputBundle { type: Int}
 signal InputBundle {}
 
 InputBundle >> IntOutputBundle;
 
 # Forward resolution bundle member
-signal IntInputBundleMember[2] { type: _IntType }
+signal IntInputBundleMember[2] { type: Int }
 signal OutputBundleMember[2] {}
 
 IntInputBundleMember[0] >> OutputBundleMember[0];
 
 # Reverse resolution bundle member
-signal IntOutputBundleMember[2] { type: _IntType}
+signal IntOutputBundleMember[2] { type: Int}
 signal InputBundleMember[2] {}
 
 InputBundleMember[0] >> IntOutputBundleMember[0];

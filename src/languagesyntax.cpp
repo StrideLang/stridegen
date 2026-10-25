@@ -24,6 +24,7 @@
 
 #include "stride/stridegen/languagesyntax.hpp"
 #include "stride/stridegen/stridesystem.hpp"
+#include "stride/utils/astquery.h"
 
 #include <iostream>
 #include <map>
@@ -404,9 +405,9 @@ std::string LanguageSyntax::getDataType(std::shared_ptr<DeclarationNode> decl,
 
   // Declarations without a type property have a builtin data type
   static const std::map<std::string, std::string> builtinDataTypes = {
-      {"string", "_StringType"},
-      {"trigger", "_SwitchType"},
-      {"iterator", "_IntType"}};
+      {"string", DataTypes::String},
+      {"trigger", DataTypes::Switch},
+      {"iterator", DataTypes::Int}};
   std::string defaultDataType;
   auto builtinDataType = builtinDataTypes.find(decl->getEntityType());
   if (builtinDataType != builtinDataTypes.end()) {

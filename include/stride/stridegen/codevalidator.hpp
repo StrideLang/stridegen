@@ -43,11 +43,20 @@ public:
   bool platformIsValid();
 
   std::vector<LangError> getErrors();
+  // Warnings don't make the tree invalid, e.g. lossy conversions
+  std::vector<LangError> getWarnings();
   std::vector<std::string> getPlatformErrors();
 
   // Static functions -----------------------------
 
   static std::vector<StreamNode *> getStreamsAtLine(ASTNode tree, int line);
+
+  // Conversions in a resolved tree that can lose data or change values:
+  // narrowing, signed to unsigned, float to integer, integers too large for
+  // a float, and mixed operands whose promoted type can't hold both. Literals
+  // that fit the destination type aren't reported. Each one is a
+  // LossyConversion warning with tokens {from, to, reason}.
+  static std::vector<LangError> findLossyConversions(ASTNode tree);
 
 private:
   void validateTree(ASTNode tree);
@@ -97,6 +106,7 @@ private:
   std::shared_ptr<StrideSystem> m_system;
   ASTNode m_tree;
   std::vector<LangError> m_errors;
+  std::vector<LangError> m_warnings;
   Options m_options;
 };
 } // namespace strd

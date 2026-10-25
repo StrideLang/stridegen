@@ -30,8 +30,11 @@
 #include "stride/utils/astvalidation.h"
 
 #include <algorithm>
+#include <cctype>
+#include <cmath>
 #include <iostream>
 #include <memory>
+#include <set>
 #include <sstream>
 #include <unordered_map>
 
@@ -91,16 +94,138 @@ std::vector<StreamNode *> CodeValidator::getStreamsAtLine(ASTNode tree,
 
 std::vector<LangError> CodeValidator::getErrors() { return m_errors; }
 
+std::vector<LangError> CodeValidator::getWarnings() { return m_warnings; }
+
+namespace {
+
+// Whether a literal value is kept exactly by data type to
+bool literalFits(const ASTNode &node, const DataTypes::Info &to) {
+  auto value = std::static_pointer_cast<ValueNode>(node);
+  if (to.isFloat()) {
+    return true; // Literals are written for the type they go to
+  }
+  if (!to.isInteger()) {
+    return false;
+  }
+  double real = node->getNodeType() == AST::Int
+                    ? static_cast<double>(value->getIntValue())
+                    : value->getRealValue();
+  if (node->getNodeType() == AST::Real && real != std::trunc(real)) {
+    return false;
+  }
+  double minimum = to.isSigned ? -std::ldexp(1.0, to.bits - 1) : 0.0;
+  double maximum = to.isSigned ? std::ldexp(1.0, to.bits - 1) - 1
+                               : std::ldexp(1.0, to.bits) - 1;
+  return real >= minimum && real <= maximum;
+}
+
+void addConversionWarning(const ASTNode &node, const std::string &from,
+                          const std::string &to, const std::string &reason,
+                          std::vector<LangError> &warnings) {
+  LangError warning;
+  warning.type = LangError::LossyConversion;
+  warning.severity = LangError::Warning;
+  warning.filename = node->getFilename();
+  warning.lineNumber = node->getLine();
+  warning.columnNumber = node->getColumn();
+  warning.errorTokens = {from, to, reason};
+  warnings.push_back(warning);
+}
+
+std::string stringProperty(const ASTNode &node, const std::string &name) {
+  auto property = node->getCompilerProperty(name);
+  if (property && property->getNodeType() == AST::String) {
+    return std::static_pointer_cast<ValueNode>(property)->getStringValue();
+  }
+  return std::string();
+}
+
+std::string trimmed(std::string text) {
+  auto notSpace = [](unsigned char c) { return !std::isspace(c); };
+  text.erase(text.begin(), std::find_if(text.begin(), text.end(), notSpace));
+  text.erase(std::find_if(text.rbegin(), text.rend(), notSpace).base(),
+             text.end());
+  return text;
+}
+
+// operandOfRiskyPromotion: node is an operand of an expression already
+// reported for its promotion, which covers the operand's conversion
+void findLossyConversionsInNode(const ASTNode &node, const ASTNode &tree,
+                                std::vector<LangError> &warnings,
+                                std::set<const void *> &visited,
+                                bool operandOfRiskyPromotion = false) {
+  if (!node || !visited.insert(node.get()).second) {
+    return;
+  }
+  auto to = stringProperty(node, "typecast");
+  auto from = stringProperty(node, "typecastFrom");
+  if (!to.empty() && !from.empty() && !operandOfRiskyPromotion) {
+    auto risk = DataTypes::conversionRisk(from, to, tree);
+    bool isLiteral =
+        node->getNodeType() == AST::Int || node->getNodeType() == AST::Real;
+    if (!risk.empty() &&
+        !(isLiteral && literalFits(node, DataTypes::resolve(to, tree)))) {
+      addConversionWarning(node, from, to, risk, warnings);
+    }
+  }
+  bool riskyPromotion = false;
+  if (node->getNodeType() == AST::Expression) {
+    auto risk = stringProperty(node, "promotionRisk");
+    if (!risk.empty()) {
+      riskyPromotion = true;
+      addConversionWarning(node, trimmed(node->toText()),
+                           stringProperty(node, "promotedType"), risk,
+                           warnings);
+    }
+  }
+  if (node->getNodeType() == AST::Declaration ||
+      node->getNodeType() == AST::ArrayDeclaration) {
+    for (const auto &property :
+         std::static_pointer_cast<DeclarationNode>(node)->getProperties()) {
+      findLossyConversionsInNode(property->getValue(), tree, warnings,
+                                 visited);
+    }
+  }
+  for (const auto &child : node->getChildren()) {
+    findLossyConversionsInNode(child, tree, warnings, visited, riskyPromotion);
+  }
+}
+
+} // namespace
+
+std::vector<LangError> CodeValidator::findLossyConversions(ASTNode tree) {
+  std::vector<LangError> warnings;
+  std::set<const void *> visited;
+  findLossyConversionsInNode(tree, tree, warnings, visited);
+  // The resolver can keep copies of a node. Report each conversion once.
+  std::vector<LangError> unique;
+  std::set<std::vector<std::string>> seen;
+  for (const auto &warning : warnings) {
+    std::vector<std::string> key = {warning.filename,
+                                    std::to_string(warning.lineNumber),
+                                    std::to_string(warning.columnNumber)};
+    key.insert(key.end(), warning.errorTokens.begin(),
+               warning.errorTokens.end());
+    if (seen.insert(key).second) {
+      unique.push_back(warning);
+    }
+  }
+  return unique;
+}
+
 std::vector<std::string> CodeValidator::getPlatformErrors() {
   return m_system->getErrors();
 }
 
 void CodeValidator::validate() {
   m_errors.clear();
+  m_warnings.clear();
   if (m_tree) {
     validatePlatform(m_tree, m_errors);
     ASTValidation::validateTypes(m_tree, m_errors, {}, m_tree, {}, "");
     ASTValidation::validateShadowing(m_tree, m_errors);
+    ASTValidation::validateDataTypes(m_tree, m_errors);
+    m_warnings = findLossyConversions(m_tree);
 
     validateArrayIndices(m_tree, m_errors, {});
     validateArraySizes(m_tree, m_errors, {});
@@ -193,7 +318,7 @@ void CodeValidator::validateSymbolUniqueness(ScopeStack scope,
         const auto &sibling = candidates[j];
         // Check if framework matches. Library declarations have no
         // framework, so framework declarations can overlay them (e.g. the
-        // dummy _RealType in the library).
+        // dummy Real in the library).
         auto nodeFrameworkNode = node->getCompilerProperty("framework");
         auto siblingFrameworkNode = sibling->getCompilerProperty("framework");
         std::string nodeFramework;

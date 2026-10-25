@@ -2199,15 +2199,15 @@ CodeAnalysis::getDataTypeForDeclaration(std::shared_ptr<DeclarationNode> decl,
         return std::static_pointer_cast<EntityNode>(typeNode)->getName();
       } else if (typeNode->getNodeType() == AST::None) {
         // FIXME we should resolve the types in CodeResolver.
-        return "_RealType";
+        return DataTypes::Real;
       } else if (typeNode->getNodeType() == AST::MemberAccess) {
         // It's a MemberAccess, we can't fully resolve it as string, default to
-        // _RealType for now
-        return "_RealType";
+        // Real for now
+        return DataTypes::Real;
       }
     }
-    // Default to _RealType if type is unspecified
-    return "_RealType";
+    // Default to Real if type is unspecified
+    return DataTypes::Real;
   } else if (ASTQuery::isConstant(decl, scope, tree)) {
     std::shared_ptr<PropertyNode> property =
         ASTQuery::findPropertyByName(decl->getProperties(), "value");
@@ -2215,10 +2215,10 @@ CodeAnalysis::getDataTypeForDeclaration(std::shared_ptr<DeclarationNode> decl,
       return resolveNodeOutDataType(property->getValue(), scope, tree);
     }
   } else if (decl->getEntityType() == "string") {
-    return "_StringType";
+    return DataTypes::String;
   } else if (decl->getEntityType() == "switch" ||
              decl->getEntityType() == "trigger") {
-    return "_SwitchType";
+    return DataTypes::Switch;
   } else {
     //    qDebug() << __FILE__ << ":" << __LINE__ << " ERROR unsupported
     //    object type";
@@ -2259,10 +2259,10 @@ std::string CodeAnalysis::resolveEntityDataType(ASTNode node,
       }
       return "";
     } else if (declaration->getEntityType() == "string") {
-      return "_StringType";
+      return DataTypes::String;
     } else if (declaration->getEntityType() == "switch" ||
                declaration->getEntityType() == "trigger") {
-      return "_SwitchType";
+      return DataTypes::Switch;
     } else {
       return "";
     }
@@ -2306,13 +2306,13 @@ std::string CodeAnalysis::resolveNodeOutDataType(ASTNode node,
 std::string CodeAnalysis::resolveNodeOutDataTypeInternal(
     ASTNode node, const ScopeStack &scopeStack, ASTNode tree) {
   if (node->getNodeType() == AST::Int) {
-    return "_IntType";
+    return DataTypes::Int;
   } else if (node->getNodeType() == AST::Real) {
-    return "_RealType";
+    return DataTypes::Real;
   } else if (node->getNodeType() == AST::Switch) {
-    return "_SwitchType";
+    return DataTypes::Switch;
   } else if (node->getNodeType() == AST::String) {
-    return "_StringType";
+    return DataTypes::String;
   } else if (node->getNodeType() == AST::List) {
     return resolveListDataType(static_cast<ListNode *>(node.get()), scopeStack,
                                tree);
@@ -2326,7 +2326,7 @@ std::string CodeAnalysis::resolveNodeOutDataTypeInternal(
     return resolveRangeDataType(static_cast<RangeNode *>(node.get()),
                                 scopeStack, tree);
   } else if (node->getNodeType() == AST::GeneratorRange) {
-    return "_IntType";
+    return DataTypes::Int;
   } else if (node->getNodeType() == AST::MemberAccess) {
     return resolveMemberAccessDataType(
         static_cast<MemberAccessNode *>(node.get()), scopeStack, tree);
@@ -2347,13 +2347,9 @@ std::string CodeAnalysis::resolveListDataType(ListNode *listnode,
   for (const ASTNode &member : members) {
     auto nextPortType = resolveNodeOutDataType(member, scopeStack, tree);
     if (type != nextPortType) {
-      if (type == "_IntType" &&
-          nextPortType == "_RealType") { // List becomes Real if Real found
-        type = "_RealType";
-      } else if (type == "_RealType" &&
-                 nextPortType == "_IntType") { // Int in Real list
-                                               // Nothing here for now
-      } else {                                 // Invalid combination
+      // e.g. a list with a Real becomes Real
+      type = DataTypes::promote(type, nextPortType, tree);
+      if (type.empty()) { // Invalid combination
         return "";
       }
     }
@@ -2370,19 +2366,23 @@ std::string CodeAnalysis::resolveExpressionDataType(ExpressionNode *exprnode,
     auto leftType = resolveNodeOutDataType(left, scopeStack, tree);
     auto rightType = resolveNodeOutDataType(right, scopeStack, tree);
 
-    auto type = leftType;
-    if (type != rightType) {
-      if (type == "_IntType" &&
-          rightType == "_RealType") { // Expr becomes Real if Real found
-        type = "_RealType";
-      } else if (type == "_RealType" && rightType == "_IntType") {
-        // Int in Real list
-        // Nothing here for now
-      } else { // Invalid combination
-        return "";
+    // e.g. an expression with a Real becomes Real. Empty for an invalid
+    // combination.
+    if (leftType != rightType) {
+      auto risk = DataTypes::promotionRisk(leftType, rightType, tree);
+      if (!risk.empty()) {
+        // Read by CodeValidator::findLossyConversions()
+        exprnode->setCompilerProperty(
+            "promotionRisk",
+            std::make_shared<ValueNode>(risk, __FILE__, __LINE__));
+        exprnode->setCompilerProperty(
+            "promotedType",
+            std::make_shared<ValueNode>(
+                DataTypes::promote(leftType, rightType, tree), __FILE__,
+                __LINE__));
       }
     }
-    return type;
+    return DataTypes::promote(leftType, rightType, tree);
 
   } else {
 
@@ -2409,11 +2409,11 @@ CodeAnalysis::resolveMemberAccessDataType(MemberAccessNode *memberAccess,
   // FIXME implement correctly. Should be read from framework?
   // Should call CodeResolver::resolveMemberAccess then get type
   if (memberAccess->getPropertyName() == "size") {
-    return "_IntType";
+    return DataTypes::Int;
   } else if (memberAccess->getPropertyName() == "rate") {
-    return "_RealType";
+    return DataTypes::Real;
   }
-  return "_RealType";
+  return DataTypes::Real;
 }
 
 std::vector<ASTNode> CodeAnalysis::getDomainIOEntityDeclarations(ASTNode tree) {
@@ -2612,8 +2612,8 @@ std::shared_ptr<DeclarationNode> CodeAnalysis::matchDefinitionToTypes(
           score += 1;
         } else if (actual == expected) {
           score += 10;
-        } else if (actual == "_IntType" && expected == "_RealType") {
-          score += 5; // int to real promotion
+        } else if (DataTypes::implicitlyConvertible(actual, expected, tree)) {
+          score += 5; // e.g. Int to Real promotion
         } else {
           return -1; // incompatible type
         }
@@ -2632,7 +2632,7 @@ std::shared_ptr<DeclarationNode> CodeAnalysis::matchDefinitionToTypes(
         score += 1;
       } else if (actual == expected) {
         score += 10;
-      } else if (actual == "_IntType" && expected == "_RealType") {
+      } else if (DataTypes::implicitlyConvertible(actual, expected, tree)) {
         score += 5;
       } else {
         return -1;
@@ -2690,7 +2690,8 @@ std::shared_ptr<DeclarationNode> CodeAnalysis::matchDefinitionToTypes(
             typeAllowed = true;
             score += 10;
             break;
-          } else if (actual == "_IntType" && allowed == "_RealType") {
+          } else if (DataTypes::implicitlyConvertible(actual, allowed,
+                                                      tree)) {
             typeAllowed = true;
             score += 5;
             break;
@@ -3038,8 +3039,7 @@ void CodeAnalysis::processStreamNode(ASTNode streamNode,
                 << streamNode->toText() << std::endl;
       return;
     }
-    std::string type = "_IntType";
-    typeTree.external.push_back({streamNode, "_IntType"});
+    typeTree.external.push_back({streamNode, DataTypes::Int});
   }
 }
 

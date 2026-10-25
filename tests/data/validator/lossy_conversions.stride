@@ -1,0 +1,21 @@
+signal Wide { type: Int32 default: 1000 }
+signal Narrow { type: UInt8 default: 0 }
+signal Fraction { type: Real default: 0.5 }
+signal Whole { type: Int default: 0 }
+signal Huge { type: UInt64 default: 1 }
+signal Negative { type: Int8 default: -1 }
+signal Sum { type: Int64 default: 0 }
+signal Safe { type: Int64 default: 0 }
+
+# Int32 to UInt8 wraps values outside 0..255
+Wide >> Narrow;
+# Real to Int truncates
+Fraction >> Whole;
+# UInt64 and Int8 promote to Int64, which can't hold every UInt64
+Huge + Negative >> Sum;
+
+# Widening keeps every value
+Narrow >> Safe;
+# A literal that fits is kept, one that doesn't wraps
+200 >> Narrow;
+300 >> Narrow;

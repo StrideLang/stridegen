@@ -32,6 +32,7 @@
 #include <cassert>
 #include <filesystem>
 #include <memory.h>
+#include <set>
 #include <string>
 
 #include "stride/stridegen/codeanalysis.hpp"
@@ -628,7 +629,7 @@ ASTNode StrideSystem::getPlatformDomain(std::string namespaceName) {
           std::static_pointer_cast<DeclarationNode>(object);
       if (decl->getName() == "PlatformDomain") {
         if (decl->getEntityType() == "alias") {
-          platformDomain = decl->getPropertyValue("block");
+          platformDomain = decl->getPropertyValue("entity");
           break;
         }
       }
@@ -886,6 +887,22 @@ StrideSystem::getFrameworkDataType(std::string frameworkName,
         frameworkName == platform->getFramework()) {
       std::string platformPath = platform->buildPlatformLibPath();
       auto dataTypeDecl = findDataTypeInPath(platformPath, strideDataType);
+      // Aliases are followed to the data type they stand for (e.g. Int is an
+      // alias of Int32 or Int16, depending on the framework)
+      std::set<std::string> visited;
+      while (dataTypeDecl && dataTypeDecl->getEntityType() == "alias" &&
+             visited.insert(dataTypeDecl->getName()).second) {
+        auto entity = dataTypeDecl->getPropertyValue("entity");
+        if (!entity || entity->getNodeType() != AST::Entity) {
+          dataTypeDecl = nullptr;
+          break;
+        }
+        dataTypeDecl =
+            findDataTypeInPath(platformPath, ASTQuery::getNodeName(entity));
+      }
+      if (dataTypeDecl && dataTypeDecl->getEntityType() == "alias") {
+        dataTypeDecl = nullptr; // Alias cycle
+      }
       if (dataTypeDecl) {
         return dataTypeDecl;
       }
@@ -1416,7 +1433,8 @@ StrideSystem::findDataTypeInPath(std::string path, std::string strideDataType) {
   for (ASTNode node : nodes) {
     if (node->getNodeType() == AST::Declaration) {
       auto decl = std::static_pointer_cast<DeclarationNode>(node);
-      if (decl->getEntityType() == "frameworkDataType") {
+      if (decl->getEntityType() == "frameworkDataType" ||
+          decl->getEntityType() == "alias") {
         if (decl->getName() == strideDataType) {
           return decl;
         }

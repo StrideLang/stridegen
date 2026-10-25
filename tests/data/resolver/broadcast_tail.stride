@@ -1,10 +1,10 @@
 platformModule IsZero {
-    inputs: [_IntType]
-    outputs: [_SwitchType]
+    inputs: [Int]
+    outputs: [Switch]
     processing: "%%outtokens:0%% = llvm::icmp eq %%intokens:0%%, 0"
 }
 
-signal Values[3] { type: _IntType }
+signal Values[3] { type: Int }
 switch Zero[3] {}
 switch AllZero {}
 switch AllZeroDirect {}

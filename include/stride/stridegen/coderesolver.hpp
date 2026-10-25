@@ -77,6 +77,9 @@ private:
   void analyzeConnections();
   void resolveTypeCasting();
   void resolveDeclarationDataTypes(); // Default type from type's typeClass
+  // Marks node to be converted from data type from to data type to
+  static void setTypecast(ASTNode node, const std::string &from,
+                          const std::string &to);
   void storeDeclarations();
   void analyzeParents();
   void analyzePersistence();

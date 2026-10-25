@@ -38,14 +38,14 @@ module NestingMod {
     ]
 }
 
-signal NestedInput { type: _IntType }
-signal NestedOutput { type: _IntType }
+signal NestedInput { type: Int }
+signal NestedOutput { type: Int }
 
 NestedInput >> NestingMod() >> NestedOutput;
 
 ################## Nested Reaction
-signal Input { type: _IntType }
-signal Output { type: _IntType }
+signal Input { type: Int }
+signal Output { type: Int }
 
 reaction NestedReaction {
     ports: [
@@ -85,8 +85,8 @@ Input >> Mod() >> Output;
 
 ################## Nested Loop
 
-signal Input { type: _IntType }
-signal Output { type: _IntType }
+signal Input { type: Int }
+signal Output { type: Int }
 
 loop NestedLoop {
 	ports: [
@@ -98,9 +98,9 @@ loop NestedLoop {
 		}
 	]
 	blocks: [
-		signal Input { type: _IntType }
-		signal Output {default: 0 type: _IntType }
-		signal Index { default: 0 type: _IntType }
+		signal Input { type: Int }
+		signal Output {default: 0 type: Int }
+		signal Index { default: 0 type: Int }
 		switch Done { default: off }
 	]
 	terminateWhen: Done

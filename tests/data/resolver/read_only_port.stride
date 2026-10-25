@@ -1,19 +1,19 @@
 module PassThrough {
     ports: [
         # type is read only on ports. It belongs on the block declaration.
-        mainInputPort InputPort { block: Input type: _IntType }
+        mainInputPort InputPort { block: Input type: Int }
         mainOutputPort OutputPort { block: Output }
     ]
     blocks: [
-        signal Input { type: _IntType }
-        signal Output { type: _IntType }
+        signal Input { type: Int }
+        signal Output { type: Int }
     ]
     streams: [
         Input >> Output;
     ]
 }
 
-signal In { type: _IntType }
-signal Out { type: _IntType }
+signal In { type: Int }
+signal Out { type: Int }
 
 In >> PassThrough() >> Out;

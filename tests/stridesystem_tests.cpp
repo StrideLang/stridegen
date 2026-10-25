@@ -61,3 +61,38 @@ TEST(StrideSystem, SafeOperationsOnEmpty) {
         auto names = system.getFrameworkNames();
     });
 }
+
+// Generated code uses the frameworkName of each data type. An alias uses the
+// one of the data type it stands for.
+TEST(StrideSystem, FrameworkDataTypeNames) {
+    std::string strideRoot = ASTFunctions::getDefaultStrideRoot();
+    auto frameworkName = [](std::shared_ptr<DeclarationNode> decl) {
+        if (!decl) {
+            return std::string("<none>");
+        }
+        auto node = decl->getPropertyValue("frameworkName");
+        if (!node || node->getNodeType() != AST::String) {
+            return std::string("<none>");
+        }
+        return std::static_pointer_cast<ValueNode>(node)->getStringValue();
+    };
+
+    StrideSystem cpp(strideRoot, "TestSystem", 1, 0, {});
+    EXPECT_EQ(frameworkName(cpp.getFrameworkDataType("TestFramework", "UInt8")),
+              "uint8_t");
+    EXPECT_EQ(
+        frameworkName(cpp.getFrameworkDataType("TestFramework", "Float32")),
+        "float");
+    EXPECT_EQ(frameworkName(cpp.getFrameworkDataType("TestFramework", "Int")),
+              "int32_t");
+
+    StrideSystem stm32(strideRoot, "SaturnM7", 1, 0, {});
+    EXPECT_EQ(frameworkName(stm32.getFrameworkDataType("STM32F7", "Real")),
+              "float");
+
+    StrideSystem jit(strideRoot, "JIT", 1, 0, {});
+    EXPECT_EQ(frameworkName(jit.getFrameworkDataType("JIT", "Real")), "double");
+    EXPECT_EQ(frameworkName(jit.getFrameworkDataType("JIT", "Int")), "int32_t");
+    EXPECT_EQ(frameworkName(jit.getFrameworkDataType("JIT", "UInt")),
+              "uint32_t");
+}

@@ -1,7 +1,7 @@
 
 platformModule PlatformModule {
-    inputs: [_RealType, _RealType]
-	outputs: [_SwitchType]
+    inputs: [Real, Real]
+	outputs: [Switch]
 #    linkTo: []
 #    declarations: ['']
     # initializations: ["// CPP Greater Init"]
@@ -9,7 +9,7 @@ platformModule PlatformModule {
     inherits: [_Signal]
 }
 
-signal Input[2] { type: _RealType}
+signal Input[2] { type: Real}
 switch Output {}
 
 Input >> PlatformModule() >> Output;

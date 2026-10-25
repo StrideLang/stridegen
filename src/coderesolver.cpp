@@ -887,7 +887,7 @@ static ASTNode expandRangesInASTNode(ASTNode node, const ScopeStack &scope,
             std::string entityType = decl->getEntityType();
             if (entityType == "switch" ||
                 CodeAnalysis::getDataTypeForDeclaration(decl, scope, tree) ==
-                    "_SwitchType") {
+                    DataTypes::Switch) {
               return std::make_shared<ValueNode>(
                   false, node->getFilename().c_str(), node->getLine());
             } else {
@@ -962,7 +962,7 @@ static ASTNode expandRangesInASTNode(ASTNode node, const ScopeStack &scope,
           std::string entityType = decl->getEntityType();
           if (entityType == "switch" ||
               CodeAnalysis::getDataTypeForDeclaration(decl, scope, tree) ==
-                  "_SwitchType") {
+                  DataTypes::Switch) {
             return std::make_shared<ValueNode>(
                 false, node->getFilename().c_str(), node->getLine());
           } else {
@@ -1987,10 +1987,10 @@ void CodeResolver::setDeclarationType(std::shared_ptr<DeclarationNode> decl,
   if (typeClass && type->getNodeType() == AST::Entity &&
       !ASTQuery::isTypeClassMember(typeClass, ASTQuery::getNodeName(type)) &&
       decl->getCompilerProperty("autoDeclared")) {
-    // A compiler declared signal receiving e.g. _SwitchType becomes a switch.
+    // A compiler declared signal receiving e.g. Switch becomes a switch.
     // User declarations keep the type, which ASTValidation then rejects.
     static const std::map<std::string, std::string> builtinTypeDeclarations = {
-        {"_SwitchType", "switch"}, {"_StringType", "string"}};
+        {DataTypes::Switch, "switch"}, {DataTypes::String, "string"}};
     auto builtin = builtinTypeDeclarations.find(ASTQuery::getNodeName(type));
     if (builtin != builtinTypeDeclarations.end()) {
       changeDeclarationType(decl, builtin->second);
@@ -4661,26 +4661,23 @@ void CodeResolver::resolveTypeCastForStream(std::shared_ptr<StreamNode> stream,
       for (const auto &listNode : left->getChildren()) {
         auto nodeType =
             CodeAnalysis::resolveNodeOutDataType(listNode, scopeStack, tree);
-        if (nodeType != "_IntType" && nodeType != "_RealType") {
+        if (!DataTypes::resolve(nodeType, tree).isNumeric()) {
           validNumericList = false;
           break;
         }
         if (resolvedType.size() == 0) {
           resolvedType = nodeType;
         } else if (nodeType != resolvedType) {
-          if (nodeType == "_RealType" && resolvedType == "_IntType") {
-            resolvedType = "_RealType";
-          }
+          resolvedType = DataTypes::promote(resolvedType, nodeType, tree);
           needsResolution = true;
         }
       }
       if (needsResolution && validNumericList) {
         for (auto &listNode : left->getChildren()) {
-          if (CodeAnalysis::resolveNodeOutDataType(listNode, scopeStack,
-                                                   tree) != resolvedType) {
-            listNode->setCompilerProperty(
-                "typecast",
-                std::make_shared<ValueNode>(resolvedType, __FILE__, __LINE__));
+          auto nodeType =
+              CodeAnalysis::resolveNodeOutDataType(listNode, scopeStack, tree);
+          if (nodeType != resolvedType) {
+            setTypecast(listNode, nodeType, resolvedType);
           }
         }
       }
@@ -4692,9 +4689,7 @@ void CodeResolver::resolveTypeCastForStream(std::shared_ptr<StreamNode> stream,
       auto nextType =
           CodeAnalysis::resolveNodeOutDataType(next, scopeStack, tree);
       if (!leftType.empty() && !nextType.empty() && leftType != nextType) {
-        left->setCompilerProperty(
-            "typecast",
-            std::make_shared<ValueNode>(nextType, __FILE__, __LINE__));
+        setTypecast(left, leftType, nextType);
       }
     }
 
@@ -4711,6 +4706,15 @@ void CodeResolver::resolveTypeCastForStream(std::shared_ptr<StreamNode> stream,
       left = nullptr;
     }
   }
+}
+
+void CodeResolver::setTypecast(ASTNode node, const std::string &from,
+                               const std::string &to) {
+  node->setCompilerProperty(
+      "typecast", std::make_shared<ValueNode>(to, __FILE__, __LINE__));
+  // Read by CodeValidator::findLossyConversions()
+  node->setCompilerProperty(
+      "typecastFrom", std::make_shared<ValueNode>(from, __FILE__, __LINE__));
 }
 
 void CodeResolver::resolveTypeCastForDeclaration(

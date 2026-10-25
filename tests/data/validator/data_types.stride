@@ -1,0 +1,86 @@
+# Valid: data types of every size, aliases and type classes
+signal Small { type: UInt8 default: 3 }
+signal Wide { type: Int64 default: 0 }
+signal Precise { type: Float32 default: 0.5 }
+signal Count { type: Int default: 0 }
+signal Level { type: Real default: 0.0 }
+
+alias Byte {
+    entity: UInt8
+}
+
+# Aliases of aliases are followed to any depth
+alias Octet {
+    entity: Byte
+}
+
+typeClass _SmallTypes {
+    types: [Int8, UInt8, Byte, Octet]
+}
+
+# A schema type is not a data type
+signal SchemaClass { type: _NumericTypes }
+signal SchemaLiteral { type: _IntLiteral }
+
+# Blocks can't take the name of a data type
+signal Real { default: 0.0 }
+
+# Malformed data types
+frameworkDataType Int12 {
+    kind: "integer"
+    bits: 12
+}
+
+frameworkDataType _Hidden {
+    kind: "integer"
+    bits: 8
+}
+
+alias LoopA {
+    entity: LoopB
+}
+
+alias LoopB {
+    entity: LoopA
+}
+
+alias _HiddenAlias {
+    entity: Int8
+}
+
+frameworkDataType NoKind {
+    frameworkName: "x"
+}
+
+# The name sets the size and sign of integer and float types
+frameworkDataType Byte8 {
+    kind: "integer"
+    bits: 8
+}
+
+frameworkDataType Float16 {
+    kind: "float"
+    bits: 32
+}
+
+# Type classes start with '_' and list data types
+typeClass NumbersClass {
+    types: [Int]
+}
+
+typeClass _LiteralMembers {
+    types: [_IntLiteral]
+}
+
+# Schema allowedTypes list type classes, not data types
+type _DataTypeInSchema {
+    typeName: "dataTypeInSchema"
+    properties: [
+        typeProperty Value {
+            name: "value"
+            allowedTypes: constrainedEntity { allowed: [Int32, _NoneLiteral] }
+            default: none
+            required: off
+        }
+    ]
+}

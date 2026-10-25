@@ -8,10 +8,10 @@ _domainDefinition TestDomain {
     substitutions: [ ]
     domainIncludes: []
     inputs: [
-        signal In { domain: TestDomain type: _RealType}
+        signal In { domain: TestDomain type: Real}
     ]
     outputs: [
-        signal Out { domain: TestDomain type: _RealType}
+        signal Out { domain: TestDomain type: Real}
     ]
 	domainFunctionCode: ''
 }
@@ -31,7 +31,7 @@ module Mod {
         signal ModInternal {domain: OutputPort.domain type:OutputPort.type}
         reaction NestedReaction { 
             blocks: [
-                signal ReactionInternal { default: 1 type: _RealType }
+                signal ReactionInternal { default: 1 type: Real }
             ]
             streams: [
                 # ModuOutput is used inside reaction but not in module
@@ -47,7 +47,7 @@ module Mod {
     ]
 }
 
-signal Value { type: _RealType domain: TestDomain }
+signal Value { type: Real domain: TestDomain }
 
 In >> Mod() >> Value;
 Value >> Out;

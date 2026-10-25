@@ -1,8 +1,8 @@
 
 ################# Simple module with input and output ports, and a single internal signal.
 # The module has an expression in the stream.
-signal Input[2] { type: _IntType }
-signal Output[2] { type: _IntType }
+signal Input[2] { type: Int }
+signal Output[2] { type: Int }
 
 module Mod {
     ports: [
