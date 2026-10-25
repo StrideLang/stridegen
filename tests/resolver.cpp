@@ -660,14 +660,33 @@ TEST(Resolver, GeneratorRangeInProperties) {
   ASSERT_EQ(modListRange->getChildren().size(), 1);
   ASSERT_EQ(modListRange->getChildren().at(0)->getNodeType(), AST::GeneratorRange);
 
-  auto sigDecl = ASTQuery::findDeclarationByName("TestSig", ScopeStack(), tree);
-  ASSERT_NE(sigDecl, nullptr);
-  auto sigDefault = sigDecl->getPropertyValue("default");
-  ASSERT_NE(sigDefault, nullptr);
-  ASSERT_EQ(sigDefault->getNodeType(), AST::List);
-  auto sigList = std::static_pointer_cast<ListNode>(sigDefault);
-  ASSERT_EQ(sigList->getChildren().size(), 1);
-  ASSERT_EQ(sigList->getChildren().at(0)->getNodeType(), AST::GeneratorRange);
+  // Ranges in a default are expanded so there is one value per element.
+  auto expectDefault = [](std::shared_ptr<DeclarationNode> decl,
+                          const std::vector<int64_t> &expected) {
+    ASSERT_NE(decl, nullptr);
+    auto sigDefault = decl->getPropertyValue("default");
+    ASSERT_NE(sigDefault, nullptr);
+    ASSERT_EQ(sigDefault->getNodeType(), AST::List);
+    auto children = sigDefault->getChildren();
+    ASSERT_EQ(children.size(), expected.size());
+    for (size_t i = 0; i < expected.size(); ++i) {
+      ASSERT_EQ(children.at(i)->getNodeType(), AST::Int);
+      EXPECT_EQ(std::static_pointer_cast<ValueNode>(children.at(i))->getIntValue(),
+                expected[i]);
+    }
+  };
+  expectDefault(ASTQuery::findDeclarationByName("TestSig", ScopeStack(), tree),
+                {0, 1, 2, 3, 4, 5, 6, 7, 8});
+  expectDefault(ASTQuery::findDeclarationByName("MixedSig", ScopeStack(), tree),
+                {0, 1, 2, 7, 10, 12, 14, 0, 1});
+  expectDefault(
+      ASTQuery::findDeclarationByName("DescendingSig", ScopeStack(), tree),
+      {3, 2, 1, 9});
+  auto blockMod = ASTQuery::findDeclarationByName("BlockRange", ScopeStack(), tree);
+  ASSERT_NE(blockMod, nullptr);
+  expectDefault(ASTQuery::findDeclarationByName(
+                    "LocalSig", ScopeStack(), blockMod->getPropertyValue("blocks")),
+                {5, 6, 7, 8});
 
   bool foundFunc = false;
   for (const auto &child : tree->getChildren()) {

@@ -65,6 +65,7 @@ private:
   void resolveDeclarationSymbols();
   void processDeclarations();
   void expandIndexedStreams();
+  void expandDefaultRanges();
   void expandParallel();
   void resolveConstants();
   void resolveMemberAccesses();

@@ -14,4 +14,18 @@ signal TestSig[9] {
     default: [0..8]
 }
 
+signal MixedSig[9] {
+    default: [0..2, 7, 10..2..14, 0..1]
+}
+
+signal DescendingSig[4] {
+    default: [3..-1..1, 9]
+}
+
+module BlockRange {
+    blocks: [
+        signal LocalSig[4] { default: [5..8] }
+    ]
+}
+
 Func(range: [0..8]);
