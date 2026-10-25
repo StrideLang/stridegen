@@ -629,18 +629,6 @@ TEST(Resolver, GeneratorRangeInProperties) {
   CodeResolver resolver(tree, strideroot);
   resolver.process();
 
-  auto constDecl = ASTQuery::findDeclarationByName("RangeConst", ScopeStack(), tree);
-  ASSERT_NE(constDecl, nullptr);
-  auto constVal = constDecl->getPropertyValue("value");
-  ASSERT_NE(constVal, nullptr);
-  ASSERT_EQ(constVal->getNodeType(), AST::List);
-  auto constList = std::static_pointer_cast<ListNode>(constVal);
-  ASSERT_EQ(constList->getChildren().size(), 1);
-  ASSERT_EQ(constList->getChildren().at(0)->getNodeType(), AST::GeneratorRange);
-  auto constGen = std::static_pointer_cast<GeneratorRangeNode>(constList->getChildren().at(0));
-  EXPECT_EQ(std::static_pointer_cast<ValueNode>(constGen->startIndex())->getIntValue(), 0);
-  EXPECT_EQ(std::static_pointer_cast<ValueNode>(constGen->endIndex())->getIntValue(), 8);
-
   auto modDecl = ASTQuery::findDeclarationByName("ModRange", ScopeStack(), tree);
   ASSERT_NE(modDecl, nullptr);
   auto modRange = modDecl->getPropertyValue("range");
@@ -660,14 +648,16 @@ TEST(Resolver, GeneratorRangeInProperties) {
   ASSERT_EQ(modListRange->getChildren().size(), 1);
   ASSERT_EQ(modListRange->getChildren().at(0)->getNodeType(), AST::GeneratorRange);
 
-  // Ranges in a default are expanded so there is one value per element.
-  auto expectDefault = [](std::shared_ptr<DeclarationNode> decl,
-                          const std::vector<int64_t> &expected) {
+  // Ranges in a signal's default and a constant's value are expanded so there
+  // is one value per element.
+  auto expectValues = [](std::shared_ptr<DeclarationNode> decl,
+                         const std::string &propertyName,
+                         const std::vector<int64_t> &expected) {
     ASSERT_NE(decl, nullptr);
-    auto sigDefault = decl->getPropertyValue("default");
-    ASSERT_NE(sigDefault, nullptr);
-    ASSERT_EQ(sigDefault->getNodeType(), AST::List);
-    auto children = sigDefault->getChildren();
+    auto values = decl->getPropertyValue(propertyName);
+    ASSERT_NE(values, nullptr);
+    ASSERT_EQ(values->getNodeType(), AST::List);
+    auto children = values->getChildren();
     ASSERT_EQ(children.size(), expected.size());
     for (size_t i = 0; i < expected.size(); ++i) {
       ASSERT_EQ(children.at(i)->getNodeType(), AST::Int);
@@ -675,6 +665,33 @@ TEST(Resolver, GeneratorRangeInProperties) {
                 expected[i]);
     }
   };
+  auto expectDefault = [&](std::shared_ptr<DeclarationNode> decl,
+                           const std::vector<int64_t> &expected) {
+    expectValues(decl, "default", expected);
+  };
+  expectValues(ASTQuery::findDeclarationByName("RangeConst", ScopeStack(), tree),
+               "value", {0, 1, 2, 3, 4, 5, 6, 7, 8});
+  expectValues(ASTQuery::findDeclarationByName("ConstTable", ScopeStack(), tree),
+               "value", {0, 1, 2, 7, 9});
+
+  // An element of a constant array with a constant index is folded.
+  bool foundConstElement = false;
+  for (const auto &child : tree->getChildren()) {
+    if (child->getNodeType() != AST::Stream) {
+      continue;
+    }
+    auto stream = std::static_pointer_cast<StreamNode>(child);
+    auto right = stream->getRight();
+    if (right && right->getNodeType() == AST::Entity &&
+        std::static_pointer_cast<EntityNode>(right)->getName() == "ConstOut") {
+      foundConstElement = true;
+      ASSERT_EQ(stream->getLeft()->getNodeType(), AST::Int);
+      EXPECT_EQ(std::static_pointer_cast<ValueNode>(stream->getLeft())
+                    ->getIntValue(),
+                7);
+    }
+  }
+  EXPECT_TRUE(foundConstElement);
   expectDefault(ASTQuery::findDeclarationByName("TestSig", ScopeStack(), tree),
                 {0, 1, 2, 3, 4, 5, 6, 7, 8});
   expectDefault(ASTQuery::findDeclarationByName("MixedSig", ScopeStack(), tree),

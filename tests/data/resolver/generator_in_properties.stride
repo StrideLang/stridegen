@@ -5,6 +5,10 @@ constant RangeConst {
     value: [0..8]
 }
 
+constant ConstTable[5] {
+    value: [0..2, 7, 9]
+}
+
 module ModRange {
     range: [0..8]
     listRange: [0..8]
@@ -29,3 +33,6 @@ module BlockRange {
 }
 
 Func(range: [0..8]);
+
+signal ConstOut {}
+ConstTable[3] >> ConstOut;

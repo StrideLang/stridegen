@@ -93,7 +93,7 @@ void CodeResolver::process() {
   m_system->injectResourceConfiguration(m_tree);
 
   // Resolve and massage tree
-  expandDefaultRanges();
+  expandValueRanges();
   resolveDeclarationSymbols();
   expandIndexedStreams();
   expandParallel(); // Find better name this expands bundles, functions and
@@ -105,7 +105,7 @@ void CodeResolver::process() {
   ASTFunctions::insertRequiredObjects(m_tree, m_system->getImportTrees());
   ASTFunctions::fillDefaultProperties(m_tree);
   ASTFunctions::processAnoymousDeclarations(m_tree);
-  expandDefaultRanges(); // For declarations inserted by the pass above
+  expandValueRanges(); // For declarations inserted by the pass above
 
   if (m_systemConfig.testing) {
     enableTesting();
@@ -1442,10 +1442,41 @@ void CodeResolver::expandIndexedStreams() {
   }
 }
 
-// Expands generator ranges in list defaults, e.g. [0..2, 7] -> [0, 1, 2, 7],
-// so code generation gets one value per array element. Other properties keep
-// their ranges.
-void CodeResolver::expandDefaultRanges() {
+// Expands generator ranges in a signal's `default` list and a constant's
+// `value` list, e.g. [0..2, 7] -> [0, 1, 2, 7], so code generation gets one
+// value per array element. Other properties keep their ranges.
+void CodeResolver::expandValueRanges() {
+  auto expandProperty = [&](std::shared_ptr<DeclarationNode> decl,
+                            const std::string &propertyName) {
+    auto value = decl->getPropertyValue(propertyName);
+    if (!value || value->getNodeType() != AST::List) {
+      return;
+    }
+    bool hasRange = false;
+    for (const auto &item : value->getChildren()) {
+      if (item->getNodeType() == AST::GeneratorRange) {
+        hasRange = true;
+        break;
+      }
+    }
+    if (!hasRange) {
+      return;
+    }
+    auto expanded = std::make_shared<ListNode>(
+        nullptr, value->getFilename().c_str(), value->getLine());
+    for (const auto &item : value->getChildren()) {
+      if (item->getNodeType() == AST::GeneratorRange) {
+        auto values = expandRangesInASTNode(item, {}, m_tree);
+        for (const auto &element : values->getChildren()) {
+          expanded->addChild(element);
+        }
+      } else {
+        expanded->addChild(item);
+      }
+    }
+    decl->replacePropertyValue(propertyName, expanded);
+  };
+
   std::function<void(ASTNode)> processContainer = [&](ASTNode container) {
     if (!container)
       return;
@@ -1455,31 +1486,9 @@ void CodeResolver::expandDefaultRanges() {
         continue;
       }
       auto decl = std::static_pointer_cast<DeclarationNode>(child);
-      auto defaultValue = decl->getPropertyValue("default");
-      if (defaultValue && defaultValue->getNodeType() == AST::List) {
-        bool hasRange = false;
-        for (const auto &item : defaultValue->getChildren()) {
-          if (item->getNodeType() == AST::GeneratorRange) {
-            hasRange = true;
-            break;
-          }
-        }
-        if (hasRange) {
-          auto expanded = std::make_shared<ListNode>(
-              nullptr, defaultValue->getFilename().c_str(),
-              defaultValue->getLine());
-          for (const auto &item : defaultValue->getChildren()) {
-            if (item->getNodeType() == AST::GeneratorRange) {
-              auto values = expandRangesInASTNode(item, {}, m_tree);
-              for (const auto &value : values->getChildren()) {
-                expanded->addChild(value);
-              }
-            } else {
-              expanded->addChild(item);
-            }
-          }
-          decl->replacePropertyValue("default", expanded);
-        }
+      expandProperty(decl, "default");
+      if (decl->getEntityType() == "constant") {
+        expandProperty(decl, "value");
       }
       // Declarations nested in blocks
       for (const auto &p : decl->getProperties()) {
