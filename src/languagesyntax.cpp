@@ -22,8 +22,8 @@
     Author: Andres Cabrera
 */
 
-#include "stride/codegen/languagesyntax.hpp"
-#include "stride/codegen/stridesystem.hpp"
+#include "stride/stridegen/languagesyntax.hpp"
+#include "stride/stridegen/stridesystem.hpp"
 
 #include <iostream>
 #include <map>

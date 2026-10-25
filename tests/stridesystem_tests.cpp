@@ -24,7 +24,7 @@
 
 #include "gtest/gtest.h"
 
-#include "stride/codegen/stridesystem.hpp"
+#include "stride/stridegen/stridesystem.hpp"
 #include "stride/utils/astfunctions.h"
 
 using namespace strd;

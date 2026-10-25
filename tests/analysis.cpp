@@ -24,11 +24,11 @@
 
 #include "gtest/gtest.h"
 
-#include "stride/codegen/codeanalysis.hpp"
-#include "stride/codegen/coderesolver.hpp"
+#include "stride/stridegen/codeanalysis.hpp"
+#include "stride/stridegen/coderesolver.hpp"
 #include "stride/utils/astfunctions.h"
 #include "stride/utils/astquery.h"
-// #include "stride/codegen/stridelibrary.hpp"
+// #include "stride/stridegen/stridelibrary.hpp"
 
 #include <fstream>
 

@@ -27,9 +27,9 @@
 
 #include "stride/parser/strideparser.h"
 
-#include "stride/codegen/builder.hpp"
-#include "stride/codegen/strideframework.hpp"
-#include "stride/codegen/systemconfiguration.hpp"
+#include "stride/stridegen/builder.hpp"
+#include "stride/stridegen/strideframework.hpp"
+#include "stride/stridegen/systemconfiguration.hpp"
 #include "stride/utils/stridelibrary.h"
 
 namespace strd {

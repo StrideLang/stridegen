@@ -24,7 +24,7 @@
 
 #include "gtest/gtest.h"
 
-#include "stride/codegen/coderesolver.hpp"
+#include "stride/stridegen/coderesolver.hpp"
 #include "stride/parser/functionnode.h"
 #include "stride/parser/generatorrangenode.h"
 #include "stride/parser/listnode.h"
@@ -34,7 +34,7 @@
 #include "stride/utils/astfunctions.h"
 #include "stride/utils/astquery.h"
 #include "stride/utils/astvalidation.h"
-// #include "stride/codegen/stridelibrary.hpp"
+// #include "stride/stridegen/stridelibrary.hpp"
 
 #include <fstream>
 #include <functional>
@@ -80,7 +80,7 @@ TEST(Resolver, ResolveBlockPersistence) {
         std::static_pointer_cast<ValueNode>(persistentProp)->getSwitchValue());
   }
   // TODO resolve persistence recursively in function instances
-  // https://github.com/StrideLang/codegen/issues/4
+  // https://github.com/StrideLang/stridegen/issues/4
 }
 
 TEST(Resolver, ResolveTypes) {

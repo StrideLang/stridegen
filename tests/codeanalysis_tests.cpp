@@ -24,8 +24,8 @@
 
 #include "gtest/gtest.h"
 
-#include "stride/codegen/codeanalysis.hpp"
-#include "stride/codegen/coderesolver.hpp"
+#include "stride/stridegen/codeanalysis.hpp"
+#include "stride/stridegen/coderesolver.hpp"
 #include "stride/parser/declarationnode.h"
 #include "stride/parser/entitynode.h"
 #include "stride/parser/functionnode.h"

@@ -22,9 +22,9 @@
     Author: Andres Cabrera
 */
 
-#include "stride/codegen/codevalidator.hpp"
-#include "stride/codegen/codeanalysis.hpp"
-#include "stride/codegen/stridesystem.hpp"
+#include "stride/stridegen/codevalidator.hpp"
+#include "stride/stridegen/codeanalysis.hpp"
+#include "stride/stridegen/stridesystem.hpp"
 #include "stride/utils/astquery.h"
 #include "stride/utils/astruntime.h"
 #include "stride/utils/astvalidation.h"

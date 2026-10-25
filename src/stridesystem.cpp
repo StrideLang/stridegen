@@ -34,10 +34,10 @@
 #include <memory.h>
 #include <string>
 
-#include "stride/codegen/codeanalysis.hpp"
-#include "stride/codegen/codevalidator.hpp"
-#include "stride/codegen/stridesystem.hpp"
-#include "stride/codegen/toolmanager.hpp"
+#include "stride/stridegen/codeanalysis.hpp"
+#include "stride/stridegen/codevalidator.hpp"
+#include "stride/stridegen/stridesystem.hpp"
+#include "stride/stridegen/toolmanager.hpp"
 #include "stride/utils/astfunctions.h"
 #include "stride/utils/astquery.h"
 

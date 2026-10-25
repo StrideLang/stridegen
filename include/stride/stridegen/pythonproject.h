@@ -33,7 +33,7 @@
 #include <QProcess>
 #include <QString>
 
-#include "stride/codegen/builder.hpp"
+#include "stride/stridegen/builder.hpp"
 
 #include "stride/parser/ast.h"
 #include "stride/parser/expressionnode.h"

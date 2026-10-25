@@ -26,8 +26,8 @@
 #include <chrono>
 #include "gtest/gtest.h"
 
-#include "stride/codegen/coderesolver.hpp"
-#include "stride/codegen/codevalidator.hpp"
+#include "stride/stridegen/coderesolver.hpp"
+#include "stride/stridegen/codevalidator.hpp"
 #include "stride/parser/platformnode.h"
 #include "stride/utils/astfunctions.h"
 

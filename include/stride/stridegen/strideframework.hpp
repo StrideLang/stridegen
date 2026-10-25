@@ -29,7 +29,7 @@
 #include <string>
 #include <utility>
 
-#include "stride/codegen/codevalidator.hpp"
+#include "stride/stridegen/codevalidator.hpp"
 
 #include "stride/parser/ast.h"
 #include "stride/parser/declarationnode.h"

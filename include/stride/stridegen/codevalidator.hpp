@@ -22,8 +22,8 @@
     Author: Andres Cabrera
 */
 
-#ifndef CODEGEN_H
-#define CODEGEN_H
+#ifndef STRIDEGEN_H
+#define STRIDEGEN_H
 
 #include "stride/parser/strideparser.h"
 
@@ -101,4 +101,4 @@ private:
 };
 } // namespace strd
 
-#endif // CODEGEN_H
+#endif // STRIDEGEN_H

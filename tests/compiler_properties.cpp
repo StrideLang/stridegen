@@ -24,10 +24,10 @@
 
 #include "gtest/gtest.h"
 
-#include "stride/codegen/coderesolver.hpp"
+#include "stride/stridegen/coderesolver.hpp"
 #include "stride/utils/astfunctions.h"
 #include "stride/utils/astquery.h"
-// #include "stride/codegen/stridelibrary.hpp"
+// #include "stride/stridegen/stridelibrary.hpp"
 
 using namespace strd;
 

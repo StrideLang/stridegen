@@ -23,10 +23,10 @@
     Author: Andres Cabrera
 */
 
-#include "stride/codegen/codeanalysis.hpp"
-#include "stride/codegen/codevalidator.hpp"
-// #include "stride/codegen/stridesystem.hpp"
-#include "stride/codegen/coderesolver.hpp"
+#include "stride/stridegen/codeanalysis.hpp"
+#include "stride/stridegen/codevalidator.hpp"
+// #include "stride/stridegen/stridesystem.hpp"
+#include "stride/stridegen/coderesolver.hpp"
 
 #include "stride/parser/arraynode.h"
 #include "stride/parser/generatorrangenode.h"
@@ -1706,7 +1706,7 @@ void CodeResolver::resolveAttributes(const ScopeStack &scope, ASTNode tree) {
           }
         }
         // FIXME recurse into module declarations inside this module
-        // https://github.com/StrideLang/codegen/issues/1
+        // https://github.com/StrideLang/stridegen/issues/1
       }
     }
   }
@@ -4214,7 +4214,7 @@ void CodeResolver::markConnectionForNode(ASTNode node, ScopeStack scopeStack,
         previous->setCompilerProperty("mainOutput", node);
         // TODO Add compiler property for function ports
         // Check duplication of "mainOutput" and "outputBlock"
-        // https://github.com/StrideLang/codegen/issues/2
+        // https://github.com/StrideLang/stridegen/issues/2
       }
     }
 

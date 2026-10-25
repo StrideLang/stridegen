@@ -29,7 +29,7 @@
 #include <map>
 #include <string>
 
-//#include "../codegen/codevalidator.h"
+//#include "../stridegen/codevalidator.h"
 #include "stride/parser/ast.h"
 #include "stride/parser/declarationnode.h"
 //#include "stride/parser/functionnode.h"

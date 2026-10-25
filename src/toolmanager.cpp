@@ -22,7 +22,7 @@
     Author: Andres Cabrera
 */
 
-#include "stride/codegen/toolmanager.hpp"
+#include "stride/stridegen/toolmanager.hpp"
 
 #include <cstdlib>
 #include <filesystem>

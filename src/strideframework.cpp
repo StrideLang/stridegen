@@ -29,7 +29,7 @@
 #include <string>
 #include <vector>
 
-#include "stride/codegen/strideframework.hpp"
+#include "stride/stridegen/strideframework.hpp"
 #include "stride/parser/declarationnode.h"
 #include "stride/parser/valuenode.h"
 #include "stride/utils/astfunctions.h"

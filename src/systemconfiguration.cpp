@@ -22,7 +22,7 @@
     Author: Andres Cabrera
 */
 
-#include "stride/codegen/systemconfiguration.hpp"
+#include "stride/stridegen/systemconfiguration.hpp"
 #include "stride/utils/astfunctions.h"
 
 #include <fstream>

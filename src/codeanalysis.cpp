@@ -22,7 +22,7 @@
     Author: Andres Cabrera
 */
 
-#include "stride/codegen/codeanalysis.hpp"
+#include "stride/stridegen/codeanalysis.hpp"
 
 #include "stride/parser/generatorrangenode.h"
 #include "stride/utils/astfunctions.h"
@@ -1948,7 +1948,7 @@ std::vector<ASTNode> CodeAnalysis::getInputDataTypes(ASTNode node,
                 }
               } else {
                 // TODO resolve for function secondary ports
-                // https://github.com/StrideLang/codegen/issues/3
+                // https://github.com/StrideLang/stridegen/issues/3
                 auto outputPortBlock =
                     ASTQuery::getModuleMainOutputPort(funcDecl);
                 if (outputPortBlock) {
@@ -2094,7 +2094,7 @@ std::vector<ASTNode> CodeAnalysis::getOutputDataTypes(ASTNode node,
                 }
               } else {
                 // TODO resolve for function secondary ports
-                // https://github.com/StrideLang/codegen/issues/3
+                // https://github.com/StrideLang/stridegen/issues/3
                 auto inputPortBlock =
                     ASTQuery::getModuleMainInputPort(funcDecl);
                 if (inputPortBlock) {
