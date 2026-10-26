@@ -1679,6 +1679,26 @@ void CodeResolver::processDomains() {
 
   ASTNode domainBlock = m_system->getPlatformDomain();
   mContextDomainStack.push_back(domainBlock);
+  // Loops and reactions run in the domain of the globals they use. Set it on
+  // their blocks first, so no order of propagation gives them a
+  // port-relative domain instead.
+  for (const auto &node : children) {
+    if (node->getNodeType() != AST::Declaration) {
+      continue;
+    }
+    auto decl = std::static_pointer_cast<DeclarationNode>(node);
+    if (decl->getEntityType() != "loop" &&
+        decl->getEntityType() != "reaction") {
+      continue;
+    }
+    std::vector<ASTNode> streams;
+    for (const auto &block :
+         ASTQuery::getContainedStreamBlocks(decl, {}, m_tree)) {
+      streams.insert(streams.end(), block.streams.begin(),
+                     block.streams.end());
+    }
+    applyDomainOfUsedGlobals(decl, streams);
+  }
   while (rit != children.rend()) {
     ASTNode node = *rit;
     propagateDomainsForNode(node, scopeStack);
@@ -2331,7 +2351,8 @@ void CodeResolver::setDomainForNode(ASTNode node, ASTNode domain,
       node->getNodeType() == AST::ArrayDeclaration) {
     std::shared_ptr<DeclarationNode> decl =
         std::static_pointer_cast<DeclarationNode>(node);
-    if (decl) {
+    // Constants have no domain: like literals, they take any domain
+    if (decl && !ASTQuery::isConstant(decl, scopeStack, tree)) {
       decl->replacePropertyValue("domain", domain);
     }
   } else if (node->getNodeType() == AST::Entity ||
@@ -2339,7 +2360,7 @@ void CodeResolver::setDomainForNode(ASTNode node, ASTNode domain,
     std::shared_ptr<DeclarationNode> declaration =
         ASTQuery::findDeclarationByName(ASTQuery::getNodeName(node), scopeStack,
                                         tree);
-    if (declaration) {
+    if (declaration && !ASTQuery::isConstant(declaration, scopeStack, tree)) {
       auto typeDeclaration =
           ASTQuery::findTypeDeclaration(declaration, scopeStack, tree);
       if (typeDeclaration &&
@@ -2391,6 +2412,8 @@ ASTNode CodeResolver::processDomainsForNode(ASTNode node, ScopeStack scopeStack,
         // The instance for a platform module is the block itself, not the
         // declaration
         domainStack.push_back(node);
+      } else if (ASTQuery::isConstant(declaration, scopeStack, m_tree)) {
+        // Constants have no domain: like literals, they take any domain
       } else {
         if (!domain || domain->getNodeType() == AST::None) {
           // Put declaration in stack to set domain once domain is resolved
@@ -3787,6 +3810,93 @@ void CodeResolver::sliceDomainsInNode(std::shared_ptr<DeclarationNode> module,
       }
     }
   }
+}
+
+// Domain shared by all the root-level blocks used in the streams. Returns null
+// when they use no domain or more than one. Constants have no domain and do not
+// count.
+ASTNode CodeResolver::getDomainOfUsedGlobals(
+    const std::vector<ASTNode> &streams) {
+  ASTNode found;
+  std::string foundId;
+  bool conflict = false;
+  std::function<void(ASTNode)> visit = [&](ASTNode node) {
+    if (!node || conflict) {
+      return;
+    }
+    if (node->getNodeType() == AST::Entity ||
+        node->getNodeType() == AST::Array) {
+      auto decl = ASTQuery::findDeclarationByName(ASTQuery::getNodeName(node),
+                                                  {}, m_tree);
+      auto domain = decl ? decl->getDomain() : nullptr;
+      if (domain && domain->getNodeType() != AST::None) {
+        std::string id = CodeAnalysis::getDomainIdentifier(domain, {}, m_tree);
+        if (!found) {
+          found = domain;
+          foundId = id;
+        } else if (id != foundId) {
+          conflict = true;
+        }
+      }
+    }
+    for (const auto &child : node->getChildren()) {
+      visit(child);
+    }
+  };
+  for (const auto &stream : streams) {
+    visit(stream);
+  }
+  return (found && !conflict) ? found->deepCopy() : nullptr;
+}
+
+// A loop or reaction can only read globals in their domain, so when the
+// globals it uses share a domain, it runs there. Gives its signal and switch
+// blocks that domain unless they already have a concrete one, and returns it.
+// Otherwise a block fed only by constants, which have no domain, would take a
+// port-relative domain (InputPort.domain) that function instances cannot be
+// placed in.
+ASTNode CodeResolver::applyDomainOfUsedGlobals(
+    std::shared_ptr<DeclarationNode> module,
+    const std::vector<ASTNode> &streams) {
+  auto globalsDomain = getDomainOfUsedGlobals(streams);
+  if (!globalsDomain) {
+    return nullptr;
+  }
+  // Port blocks take their domain from the call
+  std::set<std::string> portBlocks;
+  auto ports = module->getPropertyValue("ports");
+  if (ports && ports->getNodeType() == AST::List) {
+    for (const auto &port : ports->getChildren()) {
+      if (port->getNodeType() == AST::Declaration) {
+        auto portBlock = std::static_pointer_cast<DeclarationNode>(port)
+                             ->getPropertyValue("block");
+        if (portBlock) {
+          portBlocks.insert(ASTQuery::getNodeName(portBlock));
+        }
+      }
+    }
+  }
+  auto blocks = module->getPropertyValue("blocks");
+  if (blocks && blocks->getNodeType() == AST::List) {
+    for (const auto &block : blocks->getChildren()) {
+      if (block->getNodeType() != AST::Declaration &&
+          block->getNodeType() != AST::ArrayDeclaration) {
+        continue;
+      }
+      auto blockDecl = std::static_pointer_cast<DeclarationNode>(block);
+      if ((blockDecl->getEntityType() != "signal" &&
+           blockDecl->getEntityType() != "switch") ||
+          portBlocks.count(blockDecl->getName())) {
+        continue;
+      }
+      auto blockDomain = blockDecl->getDomain();
+      if (!blockDomain || blockDomain->getNodeType() == AST::None ||
+          blockDomain->getNodeType() == AST::MemberAccess) {
+        blockDecl->replacePropertyValue("domain", globalsDomain->deepCopy());
+      }
+    }
+  }
+  return globalsDomain;
 }
 
 ASTNode CodeResolver::getModuleContextDomain(

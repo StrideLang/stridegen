@@ -2001,8 +2001,9 @@ std::vector<ASTNode> CodeAnalysis::getOutputDataTypes(ASTNode node,
         return {type};
       } else if (decl->getEntityType() == "switch" ||
                  decl->getEntityType() == "trigger" ||
-                 decl->getEntityType() == "string") {
-        // Builtin data type
+                 decl->getEntityType() == "string" ||
+                 ASTQuery::isConstant(decl, scope, tree)) {
+        // Builtin data type, or a constant's type taken from its value
         return {std::make_shared<EntityNode>(
             getDataTypeForDeclaration(decl, scope, tree), __FILE__, __LINE__)};
       }
@@ -2024,8 +2025,9 @@ std::vector<ASTNode> CodeAnalysis::getOutputDataTypes(ASTNode node,
         return {type};
       } else if (decl->getEntityType() == "switch" ||
                  decl->getEntityType() == "trigger" ||
-                 decl->getEntityType() == "string") {
-        // Builtin data type
+                 decl->getEntityType() == "string" ||
+                 ASTQuery::isConstant(decl, scope, tree)) {
+        // Builtin data type, or a constant's type taken from its value
         return {std::make_shared<EntityNode>(
             getDataTypeForDeclaration(decl, scope, tree), __FILE__, __LINE__)};
       }

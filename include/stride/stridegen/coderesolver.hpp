@@ -211,6 +211,9 @@ private:
                           ScopeStack scopeStack);
 
   ASTNode getModuleContextDomain(std::shared_ptr<DeclarationNode> moduleDecl);
+  ASTNode getDomainOfUsedGlobals(const std::vector<ASTNode> &streams);
+  ASTNode applyDomainOfUsedGlobals(std::shared_ptr<DeclarationNode> module,
+                                   const std::vector<ASTNode> &streams);
 
   std::vector<ASTNode> mContextDomainStack;
 
