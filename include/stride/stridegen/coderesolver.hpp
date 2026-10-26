@@ -91,7 +91,8 @@ private:
   void resolveStreamRatesReverse(std::shared_ptr<StreamNode> stream,
                                  const ScopeStack &scope, ASTNode tree);
   void resolveStreamRates(std::shared_ptr<StreamNode> stream,
-                          const ScopeStack &scope, ASTNode tree);
+                          const ScopeStack &scope, ASTNode tree,
+                          bool fallbackToDomainDefault = true);
   void resolveStreamTypesReverse(std::shared_ptr<StreamNode> stream,
                                  ScopeStack stack, ASTNode tree);
   void markUnresolvedOutputType(ASTNode source, ASTNode target,

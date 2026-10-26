@@ -372,6 +372,12 @@ ASTNode CodeAnalysis::getNodeDomain(ASTNode node, ScopeStack scopeStack,
       if (expr->getCompilerProperty("samplingDomain")) {
         return expr->getCompilerProperty("samplingDomain");
       }
+      for (const auto &child : expr->getChildren()) {
+        domainNode = CodeAnalysis::getNodeDomain(child, scopeStack, tree);
+        if (domainNode) {
+          break;
+        }
+      }
     }
   } else if (node->getNodeType() == AST::Stream) {
     StreamNode *stream = static_cast<StreamNode *>(node.get());
@@ -480,6 +486,9 @@ std::string CodeAnalysis::getDomainIdentifier(ASTNode domain,
 }
 
 double CodeAnalysis::getNodeRate(ASTNode node, ScopeStack scope, ASTNode tree) {
+  if (!node) {
+    return -1;
+  }
   if (node->getNodeType() == AST::Entity) {
     EntityNode *name = static_cast<EntityNode *>(node.get());
     std::shared_ptr<DeclarationNode> declaration =
@@ -491,10 +500,8 @@ double CodeAnalysis::getNodeRate(ASTNode node, ScopeStack scope, ASTNode tree) {
         std::vector<LangError> tempErrors;
         auto rate = CodeAnalysis::resolveRateToFloat(rateNode, scope, tree,
                                                      &tempErrors);
-        if (tempErrors.size() == 0) {
+        if (tempErrors.size() == 0 && rate >= 0) {
           return rate;
-        } else {
-          return -1;
         }
       }
     }
@@ -509,16 +516,16 @@ double CodeAnalysis::getNodeRate(ASTNode node, ScopeStack scope, ASTNode tree) {
         std::vector<LangError> tempErrors;
         auto rate = CodeAnalysis::resolveRateToFloat(rateNode, scope, tree,
                                                      &tempErrors);
-        if (tempErrors.size() == 0) {
+        if (tempErrors.size() == 0 && rate >= 0) {
           return rate;
-        } else {
-          return -1;
         }
       }
     }
   } else if (node->getNodeType() == AST::Function) {
     FunctionNode *func = static_cast<FunctionNode *>(node.get());
-    return func->getRate();
+    if (func->getRate() >= 0) {
+      return func->getRate();
+    }
   } else if (node->getNodeType() == AST::List ||
              node->getNodeType() == AST::Expression) {
     double rate = -1.0;
@@ -532,7 +539,9 @@ double CodeAnalysis::getNodeRate(ASTNode node, ScopeStack scope, ASTNode tree) {
         rate = elementRate;
       }
     }
-    return rate;
+    if (rate >= 0.0) {
+      return rate;
+    }
   } else if (node->getNodeType() == AST::Declaration ||
              node->getNodeType() == AST::ArrayDeclaration) {
     auto decl = std::static_pointer_cast<DeclarationNode>(node);
@@ -549,6 +558,15 @@ double CodeAnalysis::getNodeRate(ASTNode node, ScopeStack scope, ASTNode tree) {
         }
       }
     }
+  } else if (node->getNodeType() == AST::Stream) {
+    return CodeAnalysis::getNodeRate(
+        static_cast<StreamNode *>(node.get())->getLeft(), scope, tree);
+  }
+  if (auto rateProp = node->getCompilerProperty("rate")) {
+    if (rateProp->getNodeType() == AST::Real ||
+        rateProp->getNodeType() == AST::Int) {
+      return static_cast<ValueNode *>(rateProp.get())->toReal();
+    }
   }
   return -1;
 }
@@ -556,14 +574,12 @@ double CodeAnalysis::getNodeRate(ASTNode node, ScopeStack scope, ASTNode tree) {
 double CodeAnalysis::resolveRateToFloat(ASTNode rateNode, ScopeStack scope,
                                         ASTNode tree,
                                         std::vector<LangError> *errors) {
-  double rate = -1;
-
-  if (rateNode->getNodeType() == AST::Int) {
-    rate = ASTFunctions::evaluateConstInteger(rateNode, {}, tree, errors);
-    return rate;
-  } else if (rateNode->getNodeType() == AST::Real) {
-    rate = ASTFunctions::evaluateConstReal(rateNode, {}, tree, errors);
-    return rate;
+  if (!rateNode) {
+    return -1.0;
+  }
+  if (rateNode->getNodeType() == AST::Int ||
+      rateNode->getNodeType() == AST::Real) {
+    return static_cast<ValueNode *>(rateNode.get())->toReal();
   } else if (rateNode->getNodeType() == AST::Entity) {
     EntityNode *entity = static_cast<EntityNode *>(rateNode.get());
     std::shared_ptr<DeclarationNode> valueDeclaration =
@@ -573,22 +589,20 @@ double CodeAnalysis::resolveRateToFloat(ASTNode rateNode, ScopeStack scope,
         ASTQuery::isConstant(valueDeclaration, scope, tree)) {
       std::shared_ptr<PropertyNode> property = ASTQuery::findPropertyByName(
           valueDeclaration->getProperties(), "value");
-      if (property) {
-        std::shared_ptr<ValueNode> rateNode =
-            std::static_pointer_cast<ValueNode>(property->getValue());
-        if (rateNode->getNodeType() == AST::Int) {
-          rate = ASTFunctions::evaluateConstInteger(rateNode, {}, tree, errors);
-        } else if (rateNode->getNodeType() == AST::Real) {
-          rate = ASTFunctions::evaluateConstReal(rateNode, {}, tree, errors);
+      if (property && property->getValue()) {
+        auto val = property->getValue();
+        if (val->getNodeType() == AST::Int || val->getNodeType() == AST::Real) {
+          return static_cast<ValueNode *>(val.get())->toReal();
         }
       }
     }
-    if (errors->size() == 0) {
+  } else if (rateNode->getNodeType() == AST::Expression) {
+    double rate = ASTFunctions::evaluateConstReal(rateNode, scope, tree, errors);
+    if (!errors || errors->empty()) {
       return rate;
     }
-  } else if (rateNode->getNodeType() == AST::MemberAccess) {
   }
-  return rate;
+  return -1.0;
 }
 
 double CodeAnalysis::getDomainDefaultRate(

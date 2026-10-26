@@ -24,6 +24,7 @@
 
 #include "gtest/gtest.h"
 
+#include "stride/stridegen/codeanalysis.hpp"
 #include "stride/stridegen/coderesolver.hpp"
 #include "stride/parser/functionnode.h"
 #include "stride/parser/generatorrangenode.h"
@@ -731,4 +732,67 @@ TEST(Resolver, GeneratorRangeInProperties) {
     }
   }
   EXPECT_TRUE(foundFunc);
+}
+
+TEST(Resolver, ResolveMultiRateStreams) {
+  auto strideroot = ASTFunctions::getDefaultStrideRoot();
+  std::string code = R"(
+_domainDefinition RateDom {
+    rate: 100
+}
+signal FastIn { type: Int default: 0 rate: 400 domain: RateDom }
+signal FastMid { type: Int default: 0 domain: RateDom }
+signal SlowOut { type: Int default: 0 rate: 25 domain: RateDom }
+signal UnratedA { type: Int default: 0 domain: RateDom }
+signal UnratedB { type: Int default: 0 domain: RateDom }
+signal ReverseRatedOut { type: Int default: 0 rate: 50 domain: RateDom }
+signal DefaultDomA { type: Int default: 0 domain: RateDom }
+signal DefaultDomB { type: Int default: 0 domain: RateDom }
+
+FastIn >> FastMid >> SlowOut;
+UnratedA >> UnratedB >> ReverseRatedOut;
+DefaultDomA >> DefaultDomB;
+)";
+  std::string fileName = "temp_multirate_streams.stride";
+  {
+    std::ofstream out(fileName);
+    out << code;
+  }
+  ASTNode tree = AST::parseFile(fileName.c_str());
+  ASSERT_NE(tree, nullptr);
+  tree->addChild(
+      std::make_shared<SystemNode>("JIT", 1, 0, __FILE__, __LINE__));
+  ASTFunctions::preprocess(tree);
+
+  CodeResolver resolver(tree, strideroot);
+  resolver.process();
+
+  ScopeStack scope;
+  auto fastIn = ASTQuery::findDeclarationByName("FastIn", scope, tree);
+  ASSERT_NE(fastIn, nullptr);
+  EXPECT_DOUBLE_EQ(CodeAnalysis::getNodeRate(fastIn, scope, tree), 400.0);
+
+  auto fastMid = ASTQuery::findDeclarationByName("FastMid", scope, tree);
+  ASSERT_NE(fastMid, nullptr);
+  EXPECT_DOUBLE_EQ(CodeAnalysis::getNodeRate(fastMid, scope, tree), 400.0);
+
+  auto slowOut = ASTQuery::findDeclarationByName("SlowOut", scope, tree);
+  ASSERT_NE(slowOut, nullptr);
+  EXPECT_DOUBLE_EQ(CodeAnalysis::getNodeRate(slowOut, scope, tree), 25.0);
+
+  auto unratedA = ASTQuery::findDeclarationByName("UnratedA", scope, tree);
+  ASSERT_NE(unratedA, nullptr);
+  EXPECT_DOUBLE_EQ(CodeAnalysis::getNodeRate(unratedA, scope, tree), 50.0);
+
+  auto unratedB = ASTQuery::findDeclarationByName("UnratedB", scope, tree);
+  ASSERT_NE(unratedB, nullptr);
+  EXPECT_DOUBLE_EQ(CodeAnalysis::getNodeRate(unratedB, scope, tree), 50.0);
+
+  auto defaultDomA = ASTQuery::findDeclarationByName("DefaultDomA", scope, tree);
+  ASSERT_NE(defaultDomA, nullptr);
+  EXPECT_DOUBLE_EQ(CodeAnalysis::getNodeRate(defaultDomA, scope, tree), 100.0);
+
+  auto defaultDomB = ASTQuery::findDeclarationByName("DefaultDomB", scope, tree);
+  ASSERT_NE(defaultDomB, nullptr);
+  EXPECT_DOUBLE_EQ(CodeAnalysis::getNodeRate(defaultDomB, scope, tree), 100.0);
 }

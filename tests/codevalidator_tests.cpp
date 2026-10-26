@@ -24,6 +24,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <fstream>
 #include "gtest/gtest.h"
 
 #include "stride/stridegen/coderesolver.hpp"
@@ -278,4 +279,79 @@ TEST(CodeValidator, BenchmarkValidation) {
             << std::endl;
   // Should validate basic tree in well under 1000ms
   EXPECT_LT(elapsedMs, 1000);
+}
+
+TEST(CodeValidator, IgnoredRateInOneShotDomainWarning) {
+  auto strideroot = ASTFunctions::getDefaultStrideRoot();
+  std::string code = R"(
+_domainDefinition OneShotDom {
+    rate: -1
+}
+signal RatedSig { rate: 100 domain: OneShotDom }
+signal OutSig { domain: OneShotDom }
+RatedSig >> OutSig;
+)";
+  std::string tempFile = "temp_validator_oneshot.stride";
+  {
+    std::ofstream out(tempFile);
+    out << code;
+  }
+  ASTNode tree = AST::parseFile(tempFile.c_str());
+  ASSERT_NE(tree, nullptr);
+  tree->addChild(
+      std::make_shared<SystemNode>("JIT", 1, 0, __FILE__, __LINE__));
+  ASTFunctions::preprocess(tree);
+
+  CodeResolver resolver(tree, strideroot);
+  resolver.process();
+
+  CodeValidator validator(tree);
+  EXPECT_TRUE(validator.isValid());
+  EXPECT_EQ(validator.getErrors().size(), 0u);
+
+  bool foundWarning = false;
+  for (const auto &w : validator.getWarnings()) {
+    if (w.type == LangError::IgnoredRateInOneShotDomain) {
+      foundWarning = true;
+      EXPECT_EQ(w.severity, LangError::Warning);
+      ASSERT_GE(w.errorTokens.size(), 1u);
+      EXPECT_EQ(w.errorTokens[0], "RatedSig");
+    }
+  }
+  EXPECT_TRUE(foundWarning);
+}
+
+TEST(CodeValidator, InvalidZeroRateError) {
+  auto strideroot = ASTFunctions::getDefaultStrideRoot();
+  std::string code = R"(
+_domainDefinition RateDom {
+    rate: 100
+}
+signal ZeroRateSig { rate: 0 domain: RateDom }
+)";
+  std::string tempFile = "temp_validator_zerorate.stride";
+  {
+    std::ofstream out(tempFile);
+    out << code;
+  }
+  ASTNode tree = AST::parseFile(tempFile.c_str());
+  ASSERT_NE(tree, nullptr);
+  tree->addChild(
+      std::make_shared<SystemNode>("JIT", 1, 0, __FILE__, __LINE__));
+  ASTFunctions::preprocess(tree);
+
+  CodeResolver resolver(tree, strideroot);
+  resolver.process();
+
+  CodeValidator validator(tree);
+  EXPECT_FALSE(validator.isValid());
+
+  bool foundError = false;
+  for (const auto &err : validator.getErrors()) {
+    if (err.type == LangError::UnresolvedRate) {
+      foundError = true;
+      break;
+    }
+  }
+  EXPECT_TRUE(foundError);
 }

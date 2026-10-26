@@ -466,19 +466,85 @@ void CodeValidator::validateConstraints(ASTNode tree) {
 }
 
 void CodeValidator::validateNodeRate(ASTNode node, ASTNode tree) {
+  if (!node) {
+    return;
+  }
   if (node->getNodeType() == AST::Declaration ||
       node->getNodeType() == AST::ArrayDeclaration) {
-    DeclarationNode *decl = static_cast<DeclarationNode *>(node.get());
-    if (decl->getEntityType() == "signal") {
-      //            if (findRateInProperties(decl->getProperties(), {}, tree) <
-      //            0) {
-      //                LangError error;
-      //                error.type = LangError::UnresolvedRate;
-      //                error.lineNumber = node->getLine();
-      //                error.filename = node->getFilename();
-      //                error.errorTokens.push_back(decl->getName());
-      //                m_errors << error;
-      //            }
+    auto decl = std::static_pointer_cast<DeclarationNode>(node);
+    if (decl->getEntityType() == "_domainDefinition" ||
+        decl->getEntityType() == "gameDefinition") {
+      for (const char *portListName : {"inputs", "outputs"}) {
+        ASTNode portList = decl->getPropertyValue(portListName);
+        if (portList && portList->getNodeType() == AST::List) {
+          for (const ASTNode &portDecl : portList->getChildren()) {
+            validateNodeRate(portDecl, tree);
+          }
+        }
+      }
+      return;
+    }
+    if (decl->getEntityType() == "signal" ||
+        decl->getEntityType() == "switch") {
+      ASTNode rateNode = decl->getPropertyValue("rate");
+      bool isPropagated = decl->getCompilerProperty("ratePropagated") != nullptr;
+      ASTNode domNode = CodeAnalysis::getNodeDomain(decl, {}, tree);
+      std::shared_ptr<DeclarationNode> domDecl = nullptr;
+      if (domNode) {
+        std::string domId = CodeAnalysis::getDomainIdentifier(domNode, {}, tree);
+        if (!domId.empty()) {
+          domDecl = CodeAnalysis::findDomainDeclaration(domId, tree);
+        }
+      }
+      if (rateNode && rateNode->getNodeType() != AST::None) {
+        double rate = CodeAnalysis::getNodeRate(decl, {}, tree);
+        if (!isPropagated && rate <= 0) {
+          LangError error;
+          error.type = LangError::UnresolvedRate;
+          error.lineNumber =
+              rateNode->getLine() > 0 ? rateNode->getLine() : node->getLine();
+          error.filename = node->getFilename();
+          error.errorTokens.push_back(decl->getName());
+          m_errors.push_back(error);
+        } else if (!isPropagated && rate > 0 && domDecl) {
+          double domRate = CodeAnalysis::getDomainDefaultRate(domDecl);
+          if (domRate <= 0) {
+            LangError warning;
+            warning.type = LangError::IgnoredRateInOneShotDomain;
+            warning.severity = LangError::Warning;
+            warning.lineNumber =
+                rateNode->getLine() > 0 ? rateNode->getLine() : node->getLine();
+            warning.filename = node->getFilename();
+            warning.errorTokens.push_back(decl->getName());
+            warning.errorTokens.push_back(domDecl->getName());
+            m_warnings.push_back(warning);
+          }
+        }
+      }
+    }
+  } else if (node->getNodeType() == AST::Entity ||
+             node->getNodeType() == AST::Array) {
+    ASTNode domNode = CodeAnalysis::getNodeDomain(node, {}, tree);
+    if (domNode) {
+      std::string domId = CodeAnalysis::getDomainIdentifier(domNode, {}, tree);
+      auto domDecl =
+          !domId.empty() ? CodeAnalysis::findDomainDeclaration(domId, tree) : nullptr;
+      if (domDecl && CodeAnalysis::getDomainDefaultRate(domDecl) > 0) {
+        auto decl = ASTQuery::findDeclarationByName(
+            ASTQuery::getNodeName(node), {}, tree, node->getNamespaceList());
+        if (decl && (decl->getEntityType() == "signal" ||
+                     decl->getEntityType() == "switch")) {
+          double rate = CodeAnalysis::getNodeRate(node, {}, tree);
+          if (rate <= 0) {
+            LangError error;
+            error.type = LangError::UnresolvedRate;
+            error.lineNumber = node->getLine();
+            error.filename = node->getFilename();
+            error.errorTokens.push_back(ASTQuery::getNodeName(node));
+            m_errors.push_back(error);
+          }
+        }
+      }
     }
   } else if (node->getNodeType() == AST::Stream) {
     StreamNode *stream = static_cast<StreamNode *>(node.get());

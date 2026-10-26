@@ -273,71 +273,72 @@ void CodeResolver::resolveStreamRatesReverse(std::shared_ptr<StreamNode> stream,
 }
 
 void CodeResolver::resolveStreamRates(std::shared_ptr<StreamNode> stream,
-                                      const ScopeStack &scope, ASTNode tree) {
-  ASTNode left = stream->getLeft();
-  ASTNode right = stream->getRight();
-  double rate = CodeAnalysis::getNodeRate(left, {}, m_tree);
-  if (rate < 0) {
-    // FIXME we should resolve rate to rate in the block's domain, then force to
-    // platform rate Force node rate to platform rate
+                                      const ScopeStack &scope, ASTNode tree,
+                                      bool fallbackToDomainDefault) {
+  auto resolveDefaultDomainRate = [&](ASTNode node) -> double {
+    ASTNode domNode = CodeAnalysis::getNodeDomain(node, scope, m_tree);
+    if (!domNode) {
+      domNode = CodeAnalysis::getNodeDomain(stream, scope, m_tree);
+    }
+    if (domNode) {
+      auto domainDecl = CodeAnalysis::findDomainDeclaration(
+          CodeAnalysis::getDomainIdentifier(domNode, scope, m_tree), m_tree);
+      if (domainDecl) {
+        return CodeAnalysis::getDomainDefaultRate(domainDecl);
+      }
+    }
     if (m_system && m_system->getPlatformDomain()) {
-      std::shared_ptr<DeclarationNode> domainDeclaration =
-          CodeAnalysis::findDomainDeclaration(
-              ASTQuery::getNodeName(m_system->getPlatformDomain()), m_tree);
-      if (domainDeclaration) {
-        ASTNode rateValue = domainDeclaration->getPropertyValue("rate");
-        if (rateValue->getNodeType() == AST::Int ||
-            rateValue->getNodeType() == AST::Real) {
-          rate = static_cast<ValueNode *>(rateValue.get())->toReal();
-          CodeResolver::setNodeRate(left, rate, {}, m_tree);
-        } else if (rateValue->getNodeType() == AST::MemberAccess) {
-          if (left->getNodeType() == AST::Declaration) {
-            auto decl = std::static_pointer_cast<DeclarationNode>(left);
-            decl->replacePropertyValue("rate", rateValue->deepCopy());
-          }
-        } else {
-          std::cerr << "Unexpected type for rate in domain declaration: "
-                    << ASTQuery::getNodeName(m_system->getPlatformDomain())
-                    << std::endl;
+      auto domainDecl = CodeAnalysis::findDomainDeclaration(
+          ASTQuery::getNodeName(m_system->getPlatformDomain()), m_tree);
+      if (domainDecl) {
+        ASTNode rateValue = domainDecl->getPropertyValue("rate");
+        if (rateValue && (rateValue->getNodeType() == AST::Int ||
+                          rateValue->getNodeType() == AST::Real)) {
+          return static_cast<ValueNode *>(rateValue.get())->toReal();
         }
       }
     }
+    return -1.0;
+  };
+
+  ASTNode left = stream->getLeft();
+  ASTNode right = stream->getRight();
+  double rate = CodeAnalysis::getNodeRate(left, scope, m_tree);
+  if (rate < 0) {
+    if (fallbackToDomainDefault) {
+      double defaultRate = resolveDefaultDomainRate(left);
+      if (defaultRate > 0) {
+        rate = defaultRate;
+        CodeResolver::setNodeRate(left, rate, scope, m_tree);
+      }
+    }
+  } else {
+    CodeResolver::setNodeRate(left, rate, scope, m_tree);
   }
   if (!right)
     return;
   double rightRate = -1;
   if (right->getNodeType() == AST::Stream) {
-    rightRate = CodeAnalysis::getNodeRate(
-        static_cast<StreamNode *>(right.get())->getLeft(), {}, m_tree);
-    if (rightRate <= 0 && rate >= 0) {
-      CodeResolver::setNodeRate(
-          static_cast<StreamNode *>(right.get())->getLeft(), rate, {}, m_tree);
+    ASTNode rightLeft = static_cast<StreamNode *>(right.get())->getLeft();
+    rightRate = CodeAnalysis::getNodeRate(rightLeft, scope, m_tree);
+    if (rightRate < 0 && rate >= 0) {
+      CodeResolver::setNodeRate(rightLeft, rate, scope, m_tree);
     }
     resolveStreamRates(std::static_pointer_cast<StreamNode>(right), scope,
-                       tree);
+                       tree, fallbackToDomainDefault);
   } else {
-    rightRate = CodeAnalysis::getNodeRate(right, {}, m_tree);
-    if (rightRate <= 0) {
+    rightRate = CodeAnalysis::getNodeRate(right, scope, m_tree);
+    if (rightRate < 0) {
       if (rate >= 0) {
-        CodeResolver::setNodeRate(right, rate, {}, m_tree);
-      } else {
-        auto rightDomain = CodeAnalysis::getNodeDomain(right, {}, m_tree);
-        if (rightDomain) {
-          auto domainDecl = CodeAnalysis::findDomainDeclaration(
-              CodeAnalysis::getDomainIdentifier(rightDomain, {}, m_tree),
-              m_tree);
-          if (domainDecl) {
-            auto defaultRate = CodeAnalysis::getDomainDefaultRate(domainDecl);
-            CodeResolver::setNodeRate(right, defaultRate, {}, m_tree);
-
-          } else {
-            std::cout
-                << __FILE__ << ":" << __LINE__
-                << " ERROR: can't find domain declaration to set rate for "
-                << right->toText() << std::endl;
-          }
+        CodeResolver::setNodeRate(right, rate, scope, m_tree);
+      } else if (fallbackToDomainDefault) {
+        double defaultRate = resolveDefaultDomainRate(right);
+        if (defaultRate > 0) {
+          CodeResolver::setNodeRate(right, defaultRate, scope, m_tree);
         }
       }
+    } else {
+      CodeResolver::setNodeRate(right, rightRate, scope, m_tree);
     }
   }
 }
@@ -1792,6 +1793,13 @@ void CodeResolver::resolveAttributes(const ScopeStack &scope, ASTNode tree) {
     }
   }
 
+  for (const ASTNode &node : children) {
+    if (node->getNodeType() == AST::Stream) {
+      resolveStreamRates(std::static_pointer_cast<StreamNode>(node), scope,
+                         tree, false);
+    }
+  }
+
   while (rit != children.rend()) {
     ASTNode node = *rit;
 
@@ -1809,8 +1817,12 @@ void CodeResolver::resolveAttributes(const ScopeStack &scope, ASTNode tree) {
     if (node->getNodeType() == AST::Stream) {
       resolveStreamTypesForward(std::static_pointer_cast<StreamNode>(node),
                                 scope, tree);
+      resolveStreamRatesReverse(std::static_pointer_cast<StreamNode>(node),
+                                scope, tree);
       resolveStreamRates(std::static_pointer_cast<StreamNode>(node), scope,
                          tree);
+      resolveStreamRatesReverse(std::static_pointer_cast<StreamNode>(node),
+                                scope, tree);
     }
   }
 }
@@ -2646,6 +2658,11 @@ CodeResolver::createSignalDeclaration(std::string name, int size,
 
 void CodeResolver::setNodeRate(ASTNode node, double rate, ScopeStack scope,
                                ASTNode tree) {
+  if (!node || rate < 0) {
+    return;
+  }
+  node->setCompilerProperty("rate",
+                            std::make_shared<ValueNode>(rate, __FILE__, __LINE__));
   if (node->getNodeType() == AST::Entity) {
     EntityNode *name = static_cast<EntityNode *>(node.get());
     std::shared_ptr<DeclarationNode> declaration =
@@ -2653,9 +2670,14 @@ void CodeResolver::setNodeRate(ASTNode node, double rate, ScopeStack scope,
                                         name->getNamespaceList());
     // Declarations that are not rated are reactive and have no rate to set
     if (declaration && ASTQuery::isRated(declaration, m_tree)) {
-      std::shared_ptr<ValueNode> value =
-          std::make_shared<ValueNode>(rate, __FILE__, __LINE__);
-      declaration->replacePropertyValue("rate", value);
+      if (CodeAnalysis::getNodeRate(declaration, scope, tree) < 0) {
+        declaration->setCompilerProperty(
+            "ratePropagated",
+            std::make_shared<ValueNode>(true, __FILE__, __LINE__));
+        std::shared_ptr<ValueNode> value =
+            std::make_shared<ValueNode>(rate, __FILE__, __LINE__);
+        declaration->setPropertyValue("rate", value);
+      }
     }
     return;
   } else if (node->getNodeType() == AST::Array) {
@@ -2664,11 +2686,13 @@ void CodeResolver::setNodeRate(ASTNode node, double rate, ScopeStack scope,
         ASTQuery::findDeclarationByName(arrayNode->getName(), scope, tree,
                                         arrayNode->getNamespaceList());
     if (declaration && ASTQuery::isRated(declaration, m_tree)) {
-      std::shared_ptr<ValueNode> value =
-          std::make_shared<ValueNode>(rate, __FILE__, __LINE__);
-      if (!declaration->replacePropertyValue("rate", value)) {
-        std::cerr << "Couldn't set rate. Rate property does not exist."
-                  << std ::endl;
+      if (CodeAnalysis::getNodeRate(declaration, scope, tree) < 0) {
+        declaration->setCompilerProperty(
+            "ratePropagated",
+            std::make_shared<ValueNode>(true, __FILE__, __LINE__));
+        std::shared_ptr<ValueNode> value =
+            std::make_shared<ValueNode>(rate, __FILE__, __LINE__);
+        declaration->setPropertyValue("rate", value);
       }
     }
     return;
@@ -3335,8 +3359,9 @@ void CodeResolver::declareInternalEntitiesForNode(ASTNode node,
                 ASTNode blockDomain = newSignal->getDomain();
                 if (!blockDomain || blockDomain->getNodeType() == AST::None) {
                   newSignal->setPropertyValue("domain", portDomain);
-                  if (newSignal->getPropertyValue("rate")->getNodeType() ==
-                      AST::None) {
+                  if (newSignal->getPropertyValue("rate") &&
+                      newSignal->getPropertyValue("rate")->getNodeType() ==
+                          AST::None) {
                     newSignal->setPropertyValue("rate", portRate);
                   }
                 }
