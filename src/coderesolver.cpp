@@ -134,6 +134,7 @@ void CodeResolver::process() {
   resolveTypeCasting();
   resolveDeclarationDataTypes();
   analyzePersistence();
+  analyzeStreamDependencies();
 }
 
 void CodeResolver::processSystem() {
@@ -2143,6 +2144,290 @@ void CodeResolver::analyzePersistence() {
       markNodePersistence(m_tree, nullptr, scope, m_tree);
       break;
     }
+  }
+}
+
+void CodeResolver::analyzeContainerStreamDependencies(
+    const std::vector<std::shared_ptr<StreamNode>> &streams,
+    const ScopeStack &scope, ASTNode containerDecl) {
+  if (streams.empty()) {
+    return;
+  }
+
+  std::function<void(const ASTNode &, std::vector<std::string> &)>
+      collectEntityNames =
+          [&](const ASTNode &n, std::vector<std::string> &names) {
+            if (!n)
+              return;
+            if (n->getNodeType() == AST::Entity) {
+              std::string nm = ASTQuery::getNodeName(n);
+              if (!nm.empty()) {
+                names.push_back(nm);
+              }
+            } else if (n->getNodeType() == AST::MemberAccess) {
+              if (!n->getChildren().empty()) {
+                collectEntityNames(n->getChildren()[0], names);
+              }
+            } else if (n->getNodeType() == AST::List ||
+                       n->getNodeType() == AST::Expression) {
+              for (const auto &child : n->getChildren()) {
+                collectEntityNames(child, names);
+              }
+            }
+          };
+
+  struct StreamInfo {
+    std::shared_ptr<StreamNode> stream;
+    std::set<std::string> reads;
+    std::set<std::string> writes;
+    double rate = -1.0;
+    int64_t rank = 0;
+    std::set<size_t> dependencies;
+    std::set<size_t> dependents;
+  };
+
+  std::vector<StreamInfo> streamInfos;
+  streamInfos.reserve(streams.size());
+
+  for (size_t i = 0; i < streams.size(); i++) {
+    StreamInfo info;
+    info.stream = streams[i];
+
+    StreamNodeIterator streamIt(streams[i]);
+    bool streamStart = true;
+    while (auto node = streamIt.next()) {
+      double nodeRate = CodeAnalysis::getNodeRate(node, scope, m_tree);
+      if (nodeRate > 0.0) {
+        info.rate = nodeRate;
+      }
+
+      std::vector<std::string> nodeNames;
+
+      if (node->getNodeType() == AST::Function) {
+        auto funcNode = std::static_pointer_cast<FunctionNode>(node);
+        for (const auto &prop : funcNode->getProperties()) {
+          if (prop && prop->getValue()) {
+            collectEntityNames(prop->getValue(), nodeNames);
+          }
+        }
+      } else {
+        collectEntityNames(node, nodeNames);
+      }
+
+      for (const auto &name : nodeNames) {
+        if (streamIt.hasNext()) {
+          info.reads.insert(name);
+        }
+        if (!streamStart) {
+          info.writes.insert(name);
+        }
+      }
+      streamStart = false;
+    }
+    if (info.rate <= 0.0) {
+      info.rate = CodeAnalysis::getNodeRate(streams[i], scope, m_tree);
+    }
+    if (info.rate <= 0.0 && containerDecl &&
+        (containerDecl->getNodeType() == AST::Declaration ||
+         containerDecl->getNodeType() == AST::ArrayDeclaration)) {
+      info.rate = CodeAnalysis::getDomainDefaultRate(
+          std::static_pointer_cast<DeclarationNode>(containerDecl));
+    }
+    streamInfos.push_back(std::move(info));
+  }
+
+  auto isPersistent = [&](const std::string &name) -> bool {
+    auto decl = ASTQuery::findDeclarationByName(name, scope, m_tree);
+    if (decl && decl->getCompilerProperty("persistent")) {
+      return true;
+    }
+    return false;
+  };
+
+  for (size_t j = 0; j < streamInfos.size(); j++) {
+    for (size_t i = 0; i < j; i++) {
+      bool hasDep = false;
+      for (const auto &w : streamInfos[i].writes) {
+        if (streamInfos[j].reads.count(w) && !isPersistent(w)) {
+          hasDep = true;
+          break;
+        }
+      }
+      if (!hasDep) {
+        for (const auto &w : streamInfos[i].writes) {
+          if (streamInfos[j].writes.count(w)) {
+            hasDep = true;
+            break;
+          }
+        }
+      }
+      if (hasDep) {
+        streamInfos[j].dependencies.insert(i);
+        streamInfos[i].dependents.insert(j);
+      }
+    }
+  }
+
+  std::vector<size_t> inDegree(streamInfos.size(), 0);
+  for (size_t i = 0; i < streamInfos.size(); i++) {
+    inDegree[i] = streamInfos[i].dependencies.size();
+  }
+
+  std::vector<size_t> queue;
+  for (size_t i = 0; i < streamInfos.size(); i++) {
+    if (inDegree[i] == 0) {
+      streamInfos[i].rank = 0;
+      queue.push_back(i);
+    }
+  }
+
+  size_t visited = 0;
+  while (!queue.empty()) {
+    size_t curr = queue.front();
+    queue.erase(queue.begin());
+    visited++;
+
+    for (size_t succ : streamInfos[curr].dependents) {
+      streamInfos[succ].rank =
+          std::max(streamInfos[succ].rank, streamInfos[curr].rank + 1);
+      inDegree[succ]--;
+      if (inDegree[succ] == 0) {
+        queue.push_back(succ);
+      }
+    }
+  }
+
+  if (visited < streamInfos.size()) {
+    for (size_t i = 0; i < streamInfos.size(); i++) {
+      streamInfos[i].rank = static_cast<int64_t>(i);
+    }
+  }
+
+  for (size_t i = 0; i < streamInfos.size(); i++) {
+    auto &info = streamInfos[i];
+    auto readList = std::make_shared<ListNode>(__FILE__, __LINE__);
+    for (const auto &r : info.reads) {
+      readList->addChild(std::make_shared<EntityNode>(r, __FILE__, __LINE__));
+    }
+    info.stream->setCompilerProperty("reads", readList);
+
+    auto writeList = std::make_shared<ListNode>(__FILE__, __LINE__);
+    for (const auto &w : info.writes) {
+      writeList->addChild(std::make_shared<EntityNode>(w, __FILE__, __LINE__));
+    }
+    info.stream->setCompilerProperty("writes", writeList);
+
+    auto depList = std::make_shared<ListNode>(__FILE__, __LINE__);
+    for (size_t d : info.dependencies) {
+      depList->addChild(streamInfos[d].stream);
+    }
+    info.stream->setCompilerProperty("dependencies", depList);
+
+    auto depndList = std::make_shared<ListNode>(__FILE__, __LINE__);
+    for (size_t d : info.dependents) {
+      depndList->addChild(streamInfos[d].stream);
+    }
+    info.stream->setCompilerProperty("dependents", depndList);
+
+    info.stream->setCompilerProperty(
+        "topologicalRank",
+        std::make_shared<ValueNode>(info.rank, __FILE__, __LINE__));
+  }
+
+  std::vector<size_t> sortedIndices(streamInfos.size());
+  for (size_t i = 0; i < streamInfos.size(); i++) {
+    sortedIndices[i] = i;
+  }
+  std::sort(sortedIndices.begin(), sortedIndices.end(),
+            [&](size_t a, size_t b) {
+              if (streamInfos[a].rank != streamInfos[b].rank) {
+                return streamInfos[a].rank < streamInfos[b].rank;
+              }
+              return a < b;
+            });
+
+  auto stagesList = std::make_shared<ListNode>(__FILE__, __LINE__);
+  std::shared_ptr<ListNode> currentStage = nullptr;
+  double currentStageRate = -999.0;
+
+  for (size_t idx : sortedIndices) {
+    double streamRate = streamInfos[idx].rate;
+
+    bool canCoalesce = (currentStage != nullptr) &&
+                       (std::abs(streamRate - currentStageRate) < 1e-9);
+
+    if (canCoalesce) {
+      currentStage->addChild(streamInfos[idx].stream);
+    } else {
+      currentStage = std::make_shared<ListNode>(__FILE__, __LINE__);
+      currentStageRate = streamRate;
+      if (currentStageRate > 0.0) {
+        currentStage->setCompilerProperty(
+            "rate",
+            std::make_shared<ValueNode>(currentStageRate, __FILE__, __LINE__));
+      }
+      currentStage->addChild(streamInfos[idx].stream);
+      stagesList->addChild(currentStage);
+    }
+  }
+
+  if (containerDecl) {
+    containerDecl->setCompilerProperty("streamStages", stagesList);
+  }
+}
+
+void CodeResolver::analyzeStreamDependencies() {
+  auto scope = ScopeStack();
+
+  for (const auto &child : m_tree->getChildren()) {
+    if (child && (child->getNodeType() == AST::Declaration ||
+                  child->getNodeType() == AST::ArrayDeclaration)) {
+      auto decl = std::static_pointer_cast<DeclarationNode>(child);
+      auto blocksList = decl->getPropertyValue("blocks");
+      auto streamsList = decl->getPropertyValue("streams");
+      if (streamsList) {
+        std::vector<std::shared_ptr<StreamNode>> declStreams;
+        for (const auto &s : streamsList->getChildren()) {
+          if (s && s->getNodeType() == AST::Stream) {
+            declStreams.push_back(std::static_pointer_cast<StreamNode>(s));
+          }
+        }
+        if (!declStreams.empty()) {
+          if (blocksList) {
+            scope.push_back({decl, blocksList->getChildren()});
+          } else {
+            scope.push_back({decl, {}});
+          }
+          analyzeContainerStreamDependencies(declStreams, scope, decl);
+          scope.pop_back();
+        }
+      }
+    }
+  }
+
+  std::map<std::string, std::vector<std::shared_ptr<StreamNode>>> domainStreams;
+  std::vector<std::shared_ptr<StreamNode>> allTopStreams;
+
+  for (const auto &child : m_tree->getChildren()) {
+    if (child && child->getNodeType() == AST::Stream) {
+      auto stream = std::static_pointer_cast<StreamNode>(child);
+      allTopStreams.push_back(stream);
+      std::string domName =
+          CodeAnalysis::getNodeDomainName(stream, scope, m_tree);
+      if (domName.empty()) {
+        domName = "RootDomain";
+      }
+      domainStreams[domName].push_back(stream);
+    }
+  }
+
+  for (const auto &pair : domainStreams) {
+    auto domDecl = CodeAnalysis::findDomainDeclaration(pair.first, m_tree);
+    analyzeContainerStreamDependencies(pair.second, scope, domDecl);
+  }
+
+  if (!allTopStreams.empty()) {
+    analyzeContainerStreamDependencies(allTopStreams, scope, m_tree);
   }
 }
 

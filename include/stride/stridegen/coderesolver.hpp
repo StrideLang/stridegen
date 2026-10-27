@@ -83,6 +83,10 @@ private:
   void storeDeclarations();
   void analyzeParents();
   void analyzePersistence();
+  void analyzeStreamDependencies();
+  void analyzeContainerStreamDependencies(
+      const std::vector<std::shared_ptr<StreamNode>> &streams,
+      const ScopeStack &scope, ASTNode containerDecl = nullptr);
 
   // Sub functions
   static std::shared_ptr<DeclarationNode>

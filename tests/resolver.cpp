@@ -796,3 +796,75 @@ DefaultDomA >> DefaultDomB;
   ASSERT_NE(defaultDomB, nullptr);
   EXPECT_DOUBLE_EQ(CodeAnalysis::getNodeRate(defaultDomB, scope, tree), 100.0);
 }
+
+TEST(Resolver, StreamDependencyDAG) {
+  auto strideroot = ASTFunctions::getDefaultStrideRoot();
+  std::string code = R"(
+_domainDefinition RateDom {
+    rate: 100
+}
+signal In1 { type: Int default: 0 rate: 400 domain: RateDom }
+signal Mid1 { type: Int default: 0 domain: RateDom }
+signal In2 { type: Int default: 0 rate: 400 domain: RateDom }
+signal Mid2 { type: Int default: 0 domain: RateDom }
+signal Out1 { type: Int default: 0 rate: 25 domain: RateDom }
+signal Out2 { type: Int default: 0 rate: 25 domain: RateDom }
+
+In1 >> Mid1;
+In2 >> Mid2;
+Mid1 >> Out1;
+Mid2 >> Out2;
+)";
+  std::string fileName = "temp_stream_dag.stride";
+  {
+    std::ofstream out(fileName);
+    out << code;
+  }
+  ASTNode tree = AST::parseFile(fileName.c_str());
+  ASSERT_NE(tree, nullptr);
+  tree->addChild(
+      std::make_shared<SystemNode>("JIT", 1, 0, __FILE__, __LINE__));
+  ASTFunctions::preprocess(tree);
+
+  CodeResolver resolver(tree, strideroot);
+  resolver.process();
+
+  ScopeStack scope;
+  auto domDecl = ASTQuery::findDeclarationByName("RateDom", scope, tree);
+  ASSERT_NE(domDecl, nullptr);
+  auto stagesProp = domDecl->getCompilerProperty("streamStages");
+  ASSERT_NE(stagesProp, nullptr);
+  EXPECT_EQ(stagesProp->getChildren().size(), 2u);
+
+  // Stage 0: 400 Hz (In1 >> Mid1, In2 >> Mid2)
+  auto stage0 = stagesProp->getChildren()[0];
+  ASSERT_NE(stage0, nullptr);
+  EXPECT_EQ(stage0->getChildren().size(), 2u);
+  auto rate0 = stage0->getCompilerProperty("rate");
+  ASSERT_NE(rate0, nullptr);
+  EXPECT_DOUBLE_EQ(std::static_pointer_cast<ValueNode>(rate0)->toReal(), 400.0);
+
+  // Stage 1: 25 Hz (Mid1 >> Out1, Mid2 >> Out2)
+  auto stage1 = stagesProp->getChildren()[1];
+  ASSERT_NE(stage1, nullptr);
+  EXPECT_EQ(stage1->getChildren().size(), 2u);
+  auto rate1 = stage1->getCompilerProperty("rate");
+  ASSERT_NE(rate1, nullptr);
+  EXPECT_DOUBLE_EQ(std::static_pointer_cast<ValueNode>(rate1)->toReal(), 25.0);
+
+  // Verify StreamNode DAG properties
+  auto stream0 = stage0->getChildren()[0];
+  auto reads0 = stream0->getCompilerProperty("reads");
+  auto writes0 = stream0->getCompilerProperty("writes");
+  auto deps0 = stream0->getCompilerProperty("dependencies");
+  ASSERT_NE(reads0, nullptr);
+  ASSERT_NE(writes0, nullptr);
+  ASSERT_NE(deps0, nullptr);
+  EXPECT_EQ(deps0->getChildren().size(), 0u);
+
+  auto stream2 = stage1->getChildren()[0];
+  auto deps2 = stream2->getCompilerProperty("dependencies");
+  ASSERT_NE(deps2, nullptr);
+  EXPECT_EQ(deps2->getChildren().size(), 1u);
+  EXPECT_EQ(deps2->getChildren()[0], stream0);
+}
