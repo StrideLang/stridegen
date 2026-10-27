@@ -72,9 +72,8 @@ void CodeValidator::validatePlatform(ASTNode tree,
               << std::endl;
     LangError error;
     error.type = LangError::SystemRedefinition;
+    platformNode->copyLocationTo(error);
     error.errorTokens.push_back(platformNode->platformName());
-    error.filename = platformNode->getFilename();
-    error.lineNumber = platformNode->getLine();
     errors.push_back(error);
   }
 }
@@ -125,9 +124,9 @@ void addConversionWarning(const ASTNode &node, const std::string &from,
   LangError warning;
   warning.type = LangError::LossyConversion;
   warning.severity = LangError::Warning;
-  warning.filename = node->getFilename();
-  warning.lineNumber = node->getLine();
-  warning.columnNumber = node->getColumn();
+  if (node) {
+    node->copyLocationTo(warning);
+  }
   warning.errorTokens = {from, to, reason};
   warnings.push_back(warning);
 }
@@ -249,7 +248,7 @@ void CodeValidator::validateArrayIndices(ASTNode node,
         index->getNodeType() != AST::List) {
       LangError error;
       error.type = LangError::InvalidIndexType;
-      error.lineNumber = arrayNode->getLine();
+      arrayNode->copyLocationTo(error);
       error.errorTokens.push_back(arrayNode->getName());
       errors.push_back(error);
     }
@@ -272,7 +271,7 @@ void CodeValidator::validateArraySizes(ASTNode node,
     if (size != datasize && datasize > 1) {
       LangError error;
       error.type = LangError::ArraySizeMismatch;
-      error.lineNumber = node->getLine();
+      node->copyLocationTo(error);
       error.errorTokens.push_back(declaration->getArrayIndex()->getName());
       error.errorTokens.push_back(std::to_string(size));
       error.errorTokens.push_back(std::to_string(datasize));
@@ -384,8 +383,7 @@ void CodeValidator::validateSymbolUniqueness(ScopeStack scope,
           if (atMatches) {
             LangError error;
             error.type = LangError::DuplicateSymbol;
-            error.lineNumber = sibling->getLine();
-            error.filename = sibling->getFilename();
+            sibling->copyLocationTo(error);
             error.errorTokens.push_back(name);
             error.errorTokens.push_back(node->getFilename());
             error.errorTokens.push_back(std::to_string(node->getLine()));
@@ -501,9 +499,7 @@ void CodeValidator::validateNodeRate(ASTNode node, ASTNode tree) {
         if (!isPropagated && rate <= 0) {
           LangError error;
           error.type = LangError::UnresolvedRate;
-          error.lineNumber =
-              rateNode->getLine() > 0 ? rateNode->getLine() : node->getLine();
-          error.filename = node->getFilename();
+          (rateNode && rateNode->getLine() > 0 ? rateNode : node)->copyLocationTo(error);
           error.errorTokens.push_back(decl->getName());
           m_errors.push_back(error);
         } else if (!isPropagated && rate > 0 && domDecl) {
@@ -512,9 +508,7 @@ void CodeValidator::validateNodeRate(ASTNode node, ASTNode tree) {
             LangError warning;
             warning.type = LangError::IgnoredRateInOneShotDomain;
             warning.severity = LangError::Warning;
-            warning.lineNumber =
-                rateNode->getLine() > 0 ? rateNode->getLine() : node->getLine();
-            warning.filename = node->getFilename();
+            (rateNode && rateNode->getLine() > 0 ? rateNode : node)->copyLocationTo(warning);
             warning.errorTokens.push_back(decl->getName());
             warning.errorTokens.push_back(domDecl->getName());
             m_warnings.push_back(warning);
@@ -538,8 +532,7 @@ void CodeValidator::validateNodeRate(ASTNode node, ASTNode tree) {
           if (rate <= 0) {
             LangError error;
             error.type = LangError::UnresolvedRate;
-            error.lineNumber = node->getLine();
-            error.filename = node->getFilename();
+            node->copyLocationTo(error);
             error.errorTokens.push_back(ASTQuery::getNodeName(node));
             m_errors.push_back(error);
           }
@@ -759,11 +752,10 @@ void CodeValidator::validateStreamInputSize(StreamNode *stream,
           rightInSize == 0) {
         LangError error;
         error.type = LangError::StreamMemberSizeMismatch;
-        error.lineNumber = right->getLine();
+        right->copyLocationTo(error);
         error.errorTokens.push_back(std::to_string(leftOutSize));
         error.errorTokens.push_back(ASTQuery::getNodeName(left));
         error.errorTokens.push_back(std::to_string(rightInSize));
-        error.filename = left->getFilename();
         errors.push_back(error);
       }
     }

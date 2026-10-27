@@ -2230,8 +2230,20 @@ void CodeResolver::analyzeContainerStreamDependencies(
     if (info.rate <= 0.0 && containerDecl &&
         (containerDecl->getNodeType() == AST::Declaration ||
          containerDecl->getNodeType() == AST::ArrayDeclaration)) {
-      info.rate = CodeAnalysis::getDomainDefaultRate(
-          std::static_pointer_cast<DeclarationNode>(containerDecl));
+      auto cDecl = std::static_pointer_cast<DeclarationNode>(containerDecl);
+      if (cDecl->getEntityType() == "_domainDefinition" ||
+          cDecl->getEntityType() == "gameDefinition") {
+        info.rate = CodeAnalysis::getDomainDefaultRate(cDecl);
+      } else {
+        ASTNode domNode = CodeAnalysis::getNodeDomain(cDecl, scope, m_tree);
+        if (domNode) {
+          auto dDecl = CodeAnalysis::findDomainDeclaration(
+              CodeAnalysis::getDomainIdentifier(domNode, scope, m_tree), m_tree);
+          if (dDecl) {
+            info.rate = CodeAnalysis::getDomainDefaultRate(dDecl);
+          }
+        }
+      }
     }
     streamInfos.push_back(std::move(info));
   }
