@@ -607,15 +607,18 @@ double CodeAnalysis::resolveRateToFloat(ASTNode rateNode, ScopeStack scope,
 
 double CodeAnalysis::getDomainDefaultRate(
     std::shared_ptr<DeclarationNode> domainDecl) {
-  assert(domainDecl->getEntityType() == "_domainDefinition" ||
-         domainDecl->getEntityType() == "gameDefinition");
+  if (!domainDecl ||
+      (domainDecl->getEntityType() != "_domainDefinition" &&
+       domainDecl->getEntityType() != "gameDefinition")) {
+    return -1.0;
+  }
   auto ratePort = domainDecl->getPropertyValue("rate");
   if (ratePort && (ratePort->getNodeType() == AST::Real ||
                    ratePort->getNodeType() == AST::Int)) {
     double rate = std::static_pointer_cast<ValueNode>(ratePort)->toReal();
     return rate;
   }
-  return -1;
+  return -1.0;
 }
 
 std::string CodeAnalysis::getFrameworkForDomain(std::string domainName,

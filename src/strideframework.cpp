@@ -345,14 +345,17 @@ StrideFramework::loadFrameworkRoot(std::string frameworkRoot) {
   }
   for (auto newNode : nodes) {
     if (getRootNamespace().size() > 0) {
-      assert(!newNode->getCompilerProperty("namespaceTree"));
-      newNode->appendToPropertyValue(
-          "namespaceTree",
+      if (!newNode->getCompilerProperty("namespaceTree")) {
+        newNode->appendToPropertyValue(
+            "namespaceTree",
+            std::make_shared<ValueNode>(getRootNamespace(), __FILE__, __LINE__));
+      }
+    }
+    if (!newNode->getCompilerProperty("framework")) {
+      newNode->setCompilerProperty(
+          "framework",
           std::make_shared<ValueNode>(getRootNamespace(), __FILE__, __LINE__));
     }
-    newNode->setCompilerProperty(
-        "framework",
-        std::make_shared<ValueNode>(getRootNamespace(), __FILE__, __LINE__));
   }
   return nodes;
 }
@@ -510,9 +513,7 @@ std::vector<ASTNode> StrideFramework::loadImport(string importName,
   for (auto newNode : newNodes) {
     if (getRootNamespace().size() > 0) {
       if (!newNode->getCompilerProperty("namespaceTree")) {
-        newNode->appendToPropertyValue(
-            "namespaceTree",
-            std::make_shared<ValueNode>(getRootNamespace(), __FILE__, __LINE__));
+        newNode->appendToPropertyValue("namespaceTree", std::make_shared<ValueNode>(getRootNamespace(), __FILE__, __LINE__));
       }
     }
     if (!newNode->getCompilerProperty("framework")) {

@@ -36,6 +36,7 @@
 #include "stride/utils/astquery.h"
 
 #include <algorithm>
+#include <functional>
 #include <map>
 #include <cassert>
 #include <iostream>
@@ -45,7 +46,7 @@ using namespace strd;
 
 CodeResolver::CodeResolver(ASTNode tree, std::string striderootDir,
                            SystemConfiguration systemConfig)
-    : m_systemConfig(systemConfig), m_tree(tree) {
+    : m_systemConfig(systemConfig), m_tree(tree), m_striderootDir(striderootDir) {
   std::vector<std::shared_ptr<ImportNode>> importList =
       ASTQuery::getImportNodes(tree);
   std::vector<std::shared_ptr<SystemNode>> systems =
@@ -57,6 +58,12 @@ CodeResolver::CodeResolver(ASTNode tree, std::string striderootDir,
         striderootDir, platformNode->platformName(),
         platformNode->majorVersion(), platformNode->minorVersion(), importList);
     m_system->m_systemConfig = systemConfig;
+
+    std::string targetDev;
+    if (!platformNode->hwPlatforms().empty()) {
+      targetDev = platformNode->hwPlatforms().at(0);
+    }
+    m_policyManager.loadPlatform(striderootDir, platformNode->platformName(), targetDev);
     for (size_t i = 1; i < systems.size(); i++) {
       std::cerr << "Ignoring system: " << platformNode->platformName()
                 << std::endl;
@@ -84,6 +91,9 @@ void CodeResolver::process() {
   for (const auto &decl : ioEntityDecls) {
     m_tree->addChild(decl);
   }
+
+  resolvePolicyVariants();
+
   // Insert objects
   ASTFunctions::insertRequiredObjects(m_tree, m_system->getImportTrees());
   ASTFunctions::fillDefaultProperties(m_tree);
@@ -135,6 +145,202 @@ void CodeResolver::process() {
   resolveDeclarationDataTypes();
   analyzePersistence();
   analyzeStreamDependencies();
+}
+
+
+void CodeResolver::resolvePolicyVariants() {
+  std::map<std::string, std::shared_ptr<DeclarationNode>> domains;
+  for (const auto &child : m_tree->getChildren()) {
+    if (child->getNodeType() == AST::Declaration) {
+      auto decl = std::static_pointer_cast<DeclarationNode>(child);
+      if (decl->getEntityType() == "_domainDefinition" ||
+          decl->getEntityType() == "gameDefinition") {
+        domains[decl->getName()] = decl;
+      }
+    }
+  }
+
+  ScopeStack scope;
+  resolvePolicyVariantsForNode(m_tree, nullptr, scope, domains);
+}
+
+void CodeResolver::resolvePolicyVariantsForNode(
+    ASTNode node, std::shared_ptr<DeclarationNode> activeDomain,
+    ScopeStack &scope,
+    const std::map<std::string, std::shared_ptr<DeclarationNode>> &domains) {
+  if (!node) {
+    return;
+  }
+
+  std::function<std::pair<std::string, std::vector<std::string>>(
+      const std::shared_ptr<DeclarationNode> &)>
+      getPolicies;
+  getPolicies = [&](const std::shared_ptr<DeclarationNode> &dom)
+      -> std::pair<std::string, std::vector<std::string>> {
+    if (!dom) return {"", {}};
+    std::string qPolicy;
+    std::vector<std::string> vPolicy;
+
+    auto qp = dom->getPropertyValue("qualityPolicy");
+    if (qp && qp->getNodeType() != AST::None) {
+      qPolicy = ASTQuery::getNodeName(qp);
+    }
+    auto vp = dom->getPropertyValue("variantPolicy");
+    if (vp && vp->getNodeType() == AST::List) {
+      for (const auto &item : vp->getChildren()) {
+        if (item->getNodeType() == AST::String) {
+          vPolicy.push_back(
+              std::static_pointer_cast<ValueNode>(item)->getStringValue());
+        }
+      }
+    }
+
+    if (qPolicy.empty() && vPolicy.empty()) {
+      auto parentProp = dom->getPropertyValue("parentDomain");
+      if (parentProp && parentProp->getNodeType() != AST::None) {
+        std::string pName = ASTQuery::getNodeName(parentProp);
+        auto pDecl = CodeAnalysis::findDomainDeclaration(pName, m_tree);
+        if (pDecl) {
+          return getPolicies(pDecl);
+        }
+      }
+    }
+    return {qPolicy, vPolicy};
+  };
+
+  auto rewriteNode = [&](ASTNode targetNode, const std::string &name) {
+    if (!targetNode || targetNode->getCompilerProperty("_at")) {
+      return;
+    }
+
+    auto dom = activeDomain;
+    if (!dom) {
+      auto domNode = CodeAnalysis::getNodeDomain(targetNode, scope, m_tree);
+      if (domNode) {
+        dom = CodeAnalysis::findDomainDeclaration(
+            CodeAnalysis::getDomainIdentifier(domNode, scope, m_tree), m_tree);
+      }
+    }
+    if (!dom && domains.size() == 1) {
+      dom = domains.begin()->second;
+    }
+    if (!dom) {
+      return;
+    }
+
+    auto policies = getPolicies(dom);
+    const std::string &qPolicy = policies.first;
+    const std::vector<std::string> &vPolicy = policies.second;
+
+    std::string tag;
+    if (!qPolicy.empty()) {
+      m_policyManager.resolveVariant(qPolicy, name, &tag);
+    } else if (!vPolicy.empty()) {
+      for (const auto &candTag : vPolicy) {
+        std::string candName = name + "@" + candTag;
+        if (ASTQuery::findDeclarationByName(candName, scope, m_tree)) {
+          tag = candTag;
+          break;
+        }
+        for (const auto &pair : m_system->getImportTrees()) {
+          if (ASTQuery::findDeclarationByName(candName, {{nullptr, pair.second}}, nullptr)) {
+            tag = candTag;
+            break;
+          }
+        }
+        if (!tag.empty()) break;
+      }
+    }
+
+    if (!tag.empty()) {
+      targetNode->setCompilerProperty(
+          "_at", std::make_shared<ValueNode>(tag, targetNode->getFilename().c_str(),
+                                             targetNode->getLine()));
+    }
+  };
+
+  if (node->getNodeType() == AST::Function) {
+    auto func = std::static_pointer_cast<FunctionNode>(node);
+    rewriteNode(func, func->getName());
+    for (const auto &prop : func->getProperties()) {
+      resolvePolicyVariantsForNode(prop->getValue(), activeDomain, scope, domains);
+    }
+    return;
+  }
+
+  if (node->getNodeType() == AST::Entity) {
+    auto ent = std::static_pointer_cast<EntityNode>(node);
+    if (m_policyManager.hasBindingForFunction(ent->getName())) {
+      rewriteNode(ent, ent->getName());
+    }
+    return;
+  }
+
+  if (node->getNodeType() == AST::Stream) {
+    auto stream = std::static_pointer_cast<StreamNode>(node);
+    auto streamDom = activeDomain;
+    if (stream->getLeft() && stream->getLeft()->getNodeType() == AST::Entity) {
+      std::string leftName = ASTQuery::getNodeName(stream->getLeft());
+      auto d = CodeAnalysis::findDomainDeclaration(leftName, m_tree);
+      if (d) {
+        streamDom = d;
+      }
+    }
+    if (!streamDom) {
+      auto domNode = CodeAnalysis::getNodeDomain(stream, scope, m_tree);
+      if (domNode) {
+        streamDom = CodeAnalysis::findDomainDeclaration(
+            CodeAnalysis::getDomainIdentifier(domNode, scope, m_tree), m_tree);
+      }
+    }
+    resolvePolicyVariantsForNode(stream->getLeft(), streamDom, scope, domains);
+    resolvePolicyVariantsForNode(stream->getRight(), streamDom, scope, domains);
+    return;
+  }
+
+  if (node->getNodeType() == AST::Declaration ||
+      node->getNodeType() == AST::ArrayDeclaration) {
+    auto decl = std::static_pointer_cast<DeclarationNode>(node);
+    auto declDom = activeDomain;
+    if (decl->getDomain()) {
+      auto d = CodeAnalysis::findDomainDeclaration(
+          CodeAnalysis::getDomainIdentifier(decl->getDomain(), scope, m_tree),
+          m_tree);
+      if (d) {
+        declDom = d;
+      }
+    }
+    scope.push_back({decl, {}});
+    for (const auto &prop : decl->getProperties()) {
+      resolvePolicyVariantsForNode(prop->getValue(), declDom, scope, domains);
+    }
+    for (const auto &child : decl->getChildren()) {
+      resolvePolicyVariantsForNode(child, declDom, scope, domains);
+    }
+    scope.pop_back();
+    return;
+  }
+
+  if (node->getNodeType() == AST::Property) {
+    auto prop = std::static_pointer_cast<PropertyNode>(node);
+    resolvePolicyVariantsForNode(prop->getValue(), activeDomain, scope, domains);
+    return;
+  }
+
+  if (node->getNodeType() == AST::Expression) {
+    auto expr = std::static_pointer_cast<ExpressionNode>(node);
+    if (expr->isUnary()) {
+      resolvePolicyVariantsForNode(expr->getValue(), activeDomain, scope, domains);
+    } else {
+      resolvePolicyVariantsForNode(expr->getLeft(), activeDomain, scope, domains);
+      resolvePolicyVariantsForNode(expr->getRight(), activeDomain, scope, domains);
+    }
+    return;
+  }
+
+  for (const auto &child : node->getChildren()) {
+    resolvePolicyVariantsForNode(child, activeDomain, scope, domains);
+  }
 }
 
 void CodeResolver::processSystem() {
@@ -2230,8 +2436,14 @@ void CodeResolver::analyzeContainerStreamDependencies(
     if (info.rate <= 0.0 && containerDecl &&
         (containerDecl->getNodeType() == AST::Declaration ||
          containerDecl->getNodeType() == AST::ArrayDeclaration)) {
-      info.rate = CodeAnalysis::getDomainDefaultRate(
-          std::static_pointer_cast<DeclarationNode>(containerDecl));
+      auto dom = CodeAnalysis::getNodeDomain(containerDecl, scope, m_tree);
+      if (dom) {
+        auto domDecl = CodeAnalysis::findDomainDeclaration(
+            CodeAnalysis::getDomainIdentifier(dom, scope, m_tree), m_tree);
+        if (domDecl) {
+          info.rate = CodeAnalysis::getDomainDefaultRate(domDecl);
+        }
+      }
     }
     streamInfos.push_back(std::move(info));
   }

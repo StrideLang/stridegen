@@ -41,6 +41,7 @@
 #include "stridesystem.hpp"
 
 #include "systemconfiguration.hpp"
+#include "platformpolicymanager.hpp"
 
 namespace strd {
 // Resolves all code and creates a StrideSystem
@@ -53,10 +54,17 @@ public:
   void process();
 
   std::shared_ptr<StrideSystem> getSystem() { return m_system; }
+  const PlatformPolicyManager &getPolicyManager() const { return m_policyManager; }
+  PlatformPolicyManager &getPolicyManager() { return m_policyManager; }
 
 private:
   // Main processing functions
   void processSystem();
+  void resolvePolicyVariants();
+  void resolvePolicyVariantsForNode(
+      ASTNode node, std::shared_ptr<DeclarationNode> activeDomain,
+      ScopeStack &scope,
+      const std::map<std::string, std::shared_ptr<DeclarationNode>> &domains);
   void desugar();
   void desugarSingleEntryStreams(ASTNode node, std::set<const void *> &visited);
   void enableTesting();
@@ -226,6 +234,8 @@ private:
   SystemConfiguration m_systemConfig;
 
   ASTNode m_tree;
+  std::string m_striderootDir;
+  PlatformPolicyManager m_policyManager;
 
   // Resolver configuration
   bool m_declareUnknownSymbols = false;

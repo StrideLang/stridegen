@@ -868,3 +868,200 @@ Mid2 >> Out2;
   EXPECT_EQ(deps2->getChildren().size(), 1u);
   EXPECT_EQ(deps2->getChildren()[0], stream0);
 }
+
+TEST(Resolver, PlatformPolicyManagerDirect) {
+  auto strideroot = ASTFunctions::getDefaultStrideRoot();
+  PlatformPolicyManager pm;
+  bool ok = pm.loadPlatform(strideroot, "Pico");
+  ASSERT_TRUE(ok);
+  EXPECT_EQ(pm.getPlatformName(), "Pico");
+  EXPECT_EQ(pm.getTargetDevice(), "RP2040");
+  ASSERT_EQ(pm.getSupportedDevices().size(), 2u);
+  EXPECT_EQ(pm.getSupportedDevices()[0], "RP2040");
+  EXPECT_EQ(pm.getSupportedDevices()[1], "RP2350");
+
+  // Verify resources for RP2040
+  const auto &res2040 = pm.getHardwareResources();
+  EXPECT_NE(std::find(res2040.begin(), res2040.end(), "PicoBootromFloat"), res2040.end());
+  EXPECT_NE(std::find(res2040.begin(), res2040.end(), "PicoHardwareInterpolator"), res2040.end());
+
+  // Policy resolution on RP2040
+  std::string tag;
+  EXPECT_EQ(pm.resolveVariant("Optimal", "Sin", &tag), "Sin@PicoRom");
+  EXPECT_EQ(tag, "PicoRom");
+  EXPECT_EQ(pm.resolveVariant("QualityPolicy::Fast", "Sin", &tag), "Sin@Poly5");
+  EXPECT_EQ(tag, "Poly5");
+  EXPECT_EQ(pm.resolveVariant("Accurate", "Sin", &tag), "Sin@Direct");
+  EXPECT_EQ(tag, "Direct");
+  EXPECT_EQ(pm.resolveVariant("Compact", "Sin", &tag), "Sin@PicoRom");
+  EXPECT_EQ(tag, "PicoRom");
+
+  // Overlay device RP2350
+  PlatformPolicyManager pm2350;
+  ok = pm2350.loadPlatform(strideroot, "Pico", "RP2350");
+  ASSERT_TRUE(ok);
+  EXPECT_EQ(pm2350.getTargetDevice(), "RP2350");
+  const auto &res2350 = pm2350.getHardwareResources();
+  // Cumulative resources
+  EXPECT_NE(std::find(res2350.begin(), res2350.end(), "PicoBootromFloat"), res2350.end());
+  EXPECT_NE(std::find(res2350.begin(), res2350.end(), "PicoHardwareInterpolator"), res2350.end());
+  EXPECT_NE(std::find(res2350.begin(), res2350.end(), "CortexM33HardwareFpu"), res2350.end());
+
+  // Policy resolution on RP2350: Optimal Sin and Cos are overridden to Direct!
+  EXPECT_EQ(pm2350.resolveVariant("Optimal", "Sin", &tag), "Sin@Direct");
+  EXPECT_EQ(tag, "Direct");
+  EXPECT_EQ(pm2350.resolveVariant("Optimal", "Cos", &tag), "Cos@Direct");
+  EXPECT_EQ(tag, "Direct");
+  // Tan remains PicoRom from platform baseline
+  EXPECT_EQ(pm2350.resolveVariant("Optimal", "Tan", &tag), "Tan@PicoRom");
+  EXPECT_EQ(tag, "PicoRom");
+  // Fast remains Poly5 from platform baseline
+  EXPECT_EQ(pm2350.resolveVariant("Fast", "Sin", &tag), "Sin@Poly5");
+  EXPECT_EQ(tag, "Poly5");
+}
+
+TEST(Resolver, PolicyVariantResolutionDefaultDevice) {
+  std::string code = R"(
+use Pico version 1.0
+
+import QualityPolicy
+
+_domainDefinition Audio {
+    rate: 48000.0
+    qualityPolicy: QualityPolicy::Optimal
+}
+
+signal SigX { domain: Audio }
+signal SigY { domain: Audio }
+
+SigX >> Sin() >> SigY;
+)";
+  auto fileName = writeCodeToFile(code);
+  auto tree = AST::parseFile(fileName.c_str(), nullptr);
+  ASSERT_NE(tree, nullptr);
+  auto strideroot = ASTFunctions::getDefaultStrideRoot();
+  CodeResolver resolver(tree, strideroot);
+  resolver.process();
+
+  EXPECT_EQ(resolver.getPolicyManager().getPlatformName(), "Pico");
+  EXPECT_EQ(resolver.getPolicyManager().getTargetDevice(), "RP2040");
+
+  bool foundSin = false;
+  std::function<void(ASTNode)> checkNode = [&](ASTNode node) {
+    if (!node) return;
+    if (node->getNodeType() == AST::Function) {
+      auto func = std::static_pointer_cast<FunctionNode>(node);
+      if (func->getName() == "Sin") {
+        foundSin = true;
+        auto atProp = func->getCompilerProperty("_at");
+        ASSERT_NE(atProp, nullptr);
+        EXPECT_EQ(std::static_pointer_cast<ValueNode>(atProp)->getStringValue(), "PicoRom");
+        EXPECT_EQ(ASTQuery::getNodeName(func), "Sin@PicoRom");
+      }
+    }
+    for (const auto &child : node->getChildren()) {
+      checkNode(child);
+    }
+  };
+  checkNode(tree);
+  EXPECT_TRUE(foundSin);
+}
+
+TEST(Resolver, PolicyVariantResolutionDeviceOverlay) {
+  std::string code = R"(
+use Pico version 1.0 on RP2350
+
+import QualityPolicy
+
+_domainDefinition Audio {
+    rate: 48000.0
+    qualityPolicy: QualityPolicy::Optimal
+}
+
+signal SigX { domain: Audio }
+signal SigY { domain: Audio }
+
+SigX >> Sin() >> SigY;
+)";
+  auto fileName = writeCodeToFile(code);
+  auto tree = AST::parseFile(fileName.c_str(), nullptr);
+  ASSERT_NE(tree, nullptr);
+  auto strideroot = ASTFunctions::getDefaultStrideRoot();
+  CodeResolver resolver(tree, strideroot);
+  resolver.process();
+
+  EXPECT_EQ(resolver.getPolicyManager().getPlatformName(), "Pico");
+  EXPECT_EQ(resolver.getPolicyManager().getTargetDevice(), "RP2350");
+
+  bool foundSin = false;
+  std::function<void(ASTNode)> checkNode = [&](ASTNode node) {
+    if (!node) return;
+    if (node->getNodeType() == AST::Function) {
+      auto func = std::static_pointer_cast<FunctionNode>(node);
+      if (func->getName() == "Sin") {
+        foundSin = true;
+        auto atProp = func->getCompilerProperty("_at");
+        ASSERT_NE(atProp, nullptr);
+        EXPECT_EQ(std::static_pointer_cast<ValueNode>(atProp)->getStringValue(), "Direct");
+        EXPECT_EQ(ASTQuery::getNodeName(func), "Sin@Direct");
+      }
+    }
+    for (const auto &child : node->getChildren()) {
+      checkNode(child);
+    }
+  };
+  checkNode(tree);
+  EXPECT_TRUE(foundSin);
+}
+
+TEST(Resolver, PolicyVariantSubdomainAndExplicitBypass) {
+  std::string code = R"(
+use Pico version 1.0 on RP2350
+
+import QualityPolicy
+
+_domainDefinition MainAudio {
+    rate: 48000.0
+    qualityPolicy: QualityPolicy::Optimal
+}
+
+_domainDefinition SubAudio {
+    rate: 48000.0
+    parentDomain: MainAudio
+}
+
+signal SigX { domain: SubAudio }
+signal SigY { domain: SubAudio }
+signal SigZ { domain: SubAudio }
+
+SigX >> Sin() >> SigY;
+SigX >> Sin@Poly5() >> SigZ;
+)";
+  auto fileName = writeCodeToFile(code);
+  auto tree = AST::parseFile(fileName.c_str(), nullptr);
+  ASSERT_NE(tree, nullptr);
+  auto strideroot = ASTFunctions::getDefaultStrideRoot();
+  CodeResolver resolver(tree, strideroot);
+  resolver.process();
+
+  int sinCount = 0;
+  std::function<void(ASTNode)> checkNode = [&](ASTNode node) {
+    if (!node) return;
+    if (node->getNodeType() == AST::Function) {
+      auto func = std::static_pointer_cast<FunctionNode>(node);
+      if (func->getName() == "Sin") {
+        sinCount++;
+        auto atProp = func->getCompilerProperty("_at");
+        ASSERT_NE(atProp, nullptr);
+        std::string tag = std::static_pointer_cast<ValueNode>(atProp)->getStringValue();
+        EXPECT_TRUE(tag == "Direct" || tag == "Poly5");
+      }
+    }
+    for (const auto &child : node->getChildren()) {
+      checkNode(child);
+    }
+  };
+  checkNode(tree);
+  EXPECT_EQ(sinCount, 2);
+}
+

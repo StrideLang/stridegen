@@ -12,6 +12,7 @@ set(STRIDEGEN_SRC
   src/systemconfiguration.cpp
   src/languagesyntax.cpp
   src/toolmanager.cpp
+  src/platformpolicymanager.cpp
 )
 
 set(STRIDEGEN_HEADERS
@@ -25,6 +26,7 @@ set(STRIDEGEN_HEADERS
   include/stride/stridegen/languagesyntax.hpp
   include/stride/stridegen/codeentities.hpp
   include/stride/stridegen/toolmanager.hpp
+  include/stride/stridegen/platformpolicymanager.hpp
 )
 
 #find_package(Qt5 5.7.0 REQUIRED COMPONENTS
