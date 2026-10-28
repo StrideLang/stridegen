@@ -77,6 +77,7 @@ CodeResolver::CodeResolver(ASTNode tree, std::string striderootDir,
   } else { // Make a default platform that only inlcudes the common library
     m_system =
         std::make_shared<StrideSystem>(striderootDir, "", -1, -1, importList);
+    m_policyManager.loadPlatform(striderootDir, "JIT", "");
   }
 }
 

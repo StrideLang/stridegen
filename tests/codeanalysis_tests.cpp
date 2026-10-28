@@ -661,4 +661,25 @@ TEST(CodeAnalysis, GeneratorRangeDataType) {
   EXPECT_EQ(CodeAnalysis::resolveNodeOutDataType(mixedList, ScopeStack(), nullptr), "Int");
 }
 
+TEST(CodeAnalysis, StorageEntitiesAndSignalAccess) {
+  auto tableDecl = std::make_shared<DeclarationNode>("MyTable", "table", nullptr, __FILE__, __LINE__);
+  auto bufferDecl = std::make_shared<DeclarationNode>("MyBuffer", "buffer", nullptr, __FILE__, __LINE__);
+  bufferDecl->addProperty(std::make_shared<PropertyNode>(
+      "type", std::make_shared<EntityNode>("Int", __FILE__, __LINE__), __FILE__, __LINE__));
+  auto signalDecl = std::make_shared<DeclarationNode>("MySignal", "signal", nullptr, __FILE__, __LINE__);
+
+  EXPECT_TRUE(CodeAnalysis::isStorageEntity(tableDecl));
+  EXPECT_TRUE(CodeAnalysis::isStorageEntity(bufferDecl));
+  EXPECT_FALSE(CodeAnalysis::isStorageEntity(signalDecl));
+
+  EXPECT_EQ(CodeAnalysis::getStorageElementDataType(tableDecl), "Real");
+  EXPECT_EQ(CodeAnalysis::getStorageElementDataType(bufferDecl), "Int");
+  EXPECT_EQ(CodeAnalysis::getDataTypeForDeclaration(tableDecl, {}, nullptr), "Real");
+  EXPECT_EQ(CodeAnalysis::getDataTypeForDeclaration(bufferDecl, {}, nullptr), "Int");
+
+  // Table signal access returns ACCESS_NONE
+  auto tableAccess = CodeAnalysis::getSignalAccess(tableDecl, nullptr, nullptr);
+  EXPECT_EQ(tableAccess.access, ACCESS_NONE);
+}
+
 

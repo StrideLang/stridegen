@@ -25,7 +25,9 @@
 #ifndef CODEANALYSIS_HPP
 #define CODEANALYSIS_HPP
 
+#include <map>
 #include <unordered_set>
+#include "codeentities.hpp"
 #include "stridesystem.hpp"
 
 namespace strd {
@@ -213,6 +215,10 @@ public:
 
   static std::vector<ASTNode>
   getUsedEntitiesInStreams(std::shared_ptr<DeclarationNode> funcDecl);
+
+  static bool isStorageEntity(std::shared_ptr<DeclarationNode> decl);
+  static std::string getStorageElementDataType(std::shared_ptr<DeclarationNode> decl);
+  static SignalAccess getSignalAccess(ASTNode instanceNode, ASTNode tree, StrideSystem *system, const std::map<std::string, std::string> &domainMap = {});
 
   using DataInfo = std::pair<ASTNode, std::string>; // Instance, Type
   struct TypeTree {

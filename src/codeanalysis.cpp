@@ -2235,6 +2235,8 @@ CodeAnalysis::getDataTypeForDeclaration(std::shared_ptr<DeclarationNode> decl,
     }
   } else if (decl->getEntityType() == "string") {
     return DataTypes::String;
+  } else if (isStorageEntity(decl)) {
+    return getStorageElementDataType(decl);
   } else if (decl->getEntityType() == "switch" ||
              decl->getEntityType() == "trigger") {
     return DataTypes::Switch;
@@ -2279,6 +2281,8 @@ std::string CodeAnalysis::resolveEntityDataType(ASTNode node,
       return "";
     } else if (declaration->getEntityType() == "string") {
       return DataTypes::String;
+    } else if (isStorageEntity(declaration)) {
+      return getStorageElementDataType(declaration);
     } else if (declaration->getEntityType() == "switch" ||
                declaration->getEntityType() == "trigger") {
       return DataTypes::Switch;
@@ -2828,7 +2832,8 @@ CodeAnalysis::NodeRole CodeAnalysis::determineNodeRole(
         if (persistentProp ||
             (explicitPersistentProp &&
              explicitPersistentProp->getNodeType() != AST::None) ||
-            (resetProp && resetProp->getNodeType() != AST::None)) {
+            (resetProp && resetProp->getNodeType() != AST::None) ||
+            CodeAnalysis::isStorageEntity(entityDecl)) {
           return NodeRole::Persistent;
         } else {
           return NodeRole::Internal;
@@ -3340,4 +3345,167 @@ CodeAnalysis::TypeTree::getDomainRootTree(std::string domainName) {
     }
   }
   return this;
+}
+
+bool CodeAnalysis::isStorageEntity(std::shared_ptr<DeclarationNode> decl) {
+  if (!decl)
+    return false;
+  const std::string &type = decl->getEntityType();
+  return type == "table" || type == "buffer";
+}
+
+std::string
+CodeAnalysis::getStorageElementDataType(std::shared_ptr<DeclarationNode> decl) {
+  if (!decl)
+    return DataTypes::Real;
+  auto typeProp = decl->getPropertyValue("type");
+  if (typeProp && typeProp->getNodeType() == AST::Entity) {
+    return std::static_pointer_cast<EntityNode>(typeProp)->getName();
+  } else if (typeProp && typeProp->getNodeType() == AST::String) {
+    return std::static_pointer_cast<ValueNode>(typeProp)->getStringValue();
+  }
+  return DataTypes::Real;
+}
+
+SignalAccess
+CodeAnalysis::getSignalAccess(ASTNode instanceNode, ASTNode tree,
+                             StrideSystem *system,
+                             const std::map<std::string, std::string> &domainMap) {
+  SignalAccess access;
+  if (!instanceNode)
+    return access;
+
+  if (instanceNode->getNodeType() == AST::Declaration &&
+      std::static_pointer_cast<DeclarationNode>(instanceNode)->getEntityType() == "table") {
+    return access;
+  }
+
+  std::string frameworkName;
+  auto frameworkNode = instanceNode->getCompilerProperty("framework");
+  if (frameworkNode && frameworkNode->getNodeType() == AST::String) {
+    frameworkName = std::static_pointer_cast<ValueNode>(frameworkNode)->getStringValue();
+  }
+
+  auto triggerResets = instanceNode->getCompilerProperty("resetDomains");
+  if (triggerResets && triggerResets->getChildren().size() > 0) {
+    access.access = (DomainAccess)(access.access | ACCESS_SDRst);
+  }
+
+  if (instanceNode->getNodeType() == AST::Declaration ||
+      instanceNode->getNodeType() == AST::ArrayDeclaration) {
+    auto decl = std::static_pointer_cast<DeclarationNode>(instanceNode);
+    auto readDomains = decl->getCompilerProperty("reads");
+    if (readDomains && readDomains->getChildren().size() > 0) {
+      for (const auto &readDomain : readDomains->getChildren()) {
+        auto domainId = CodeAnalysis::getDomainIdentifier(readDomain, {}, tree);
+        auto it = domainMap.find(domainId);
+        if (it != domainMap.end()) {
+          domainId = it->second;
+        }
+        if (std::find(access.readDomains.begin(), access.readDomains.end(), domainId) ==
+            access.readDomains.end()) {
+          access.readDomains.push_back(domainId);
+          access.readFrameworks.push_back(
+              CodeAnalysis::getFrameworkForDomain(domainId, tree));
+        }
+      }
+    }
+
+    auto writeDomains = decl->getCompilerProperty("writes");
+    if (writeDomains && writeDomains->getChildren().size() > 0) {
+      for (const auto &writeDomain : writeDomains->getChildren()) {
+        auto domainId = CodeAnalysis::getDomainIdentifier(writeDomain, {}, tree);
+        auto it = domainMap.find(domainId);
+        if (it != domainMap.end()) {
+          domainId = it->second;
+        }
+        if (std::find(access.writeDomains.begin(), access.writeDomains.end(), domainId) ==
+            access.writeDomains.end()) {
+          access.writeDomains.push_back(domainId);
+          access.writeFrameworks.push_back(
+              CodeAnalysis::getFrameworkForDomain(domainId, tree));
+        }
+      }
+    }
+
+    bool crossesFrameworks = false;
+    for (size_t i = 0; i < access.readFrameworks.size(); i++) {
+      for (size_t j = 0; j < access.writeFrameworks.size(); j++) {
+        if (access.readFrameworks.at(i) != access.writeFrameworks.at(j)) {
+          crossesFrameworks = true;
+          access.access =
+              (DomainAccess)(access.access | ACCESS_CROSSES_FRAMEWORK);
+          break;
+        }
+      }
+    }
+
+    if (access.readDomains.size() == 1 && access.writeDomains.size() == 1 &&
+        !crossesFrameworks) {
+      if (access.readDomains[0] == access.writeDomains[0]) {
+        return access;
+      }
+    }
+    if (access.readDomains.size() == 0 || access.writeDomains.size() == 0) {
+      return access;
+    }
+
+    if (system && !frameworkName.empty()) {
+      auto syncs = system->getFrameworkSynchronization(frameworkName);
+      std::vector<std::string> syncReadDomains;
+      std::vector<std::string> syncWriteDomains;
+      std::vector<std::string> syncSchemes;
+
+      for (const auto &syncNode : syncs) {
+        auto readDomainNode = syncNode->getPropertyValue("readDomain");
+        if (readDomainNode && readDomainNode->getNodeType() == AST::Entity) {
+          syncReadDomains.push_back(ASTQuery::getNodeName(readDomainNode));
+        } else {
+          syncReadDomains.push_back("");
+        }
+        auto writeDomainNode = syncNode->getPropertyValue("writeDomain");
+        if (writeDomainNode && writeDomainNode->getNodeType() == AST::Entity) {
+          syncWriteDomains.push_back(ASTQuery::getNodeName(writeDomainNode));
+        } else {
+          syncWriteDomains.push_back("");
+        }
+        auto schemeNode = syncNode->getPropertyValue("scheme");
+        if (schemeNode && schemeNode->getNodeType() == AST::Entity) {
+          syncSchemes.push_back(ASTQuery::getNodeName(schemeNode));
+        } else {
+          syncSchemes.push_back("");
+        }
+      }
+
+      size_t bestMatch = syncReadDomains.size();
+      if (bestMatch == syncReadDomains.size()) {
+        auto emptyRead =
+            std::find(syncReadDomains.begin(), syncReadDomains.end(), "");
+        auto emptyWrite =
+            std::find(syncWriteDomains.begin(), syncWriteDomains.end(), "");
+        if (emptyRead != syncReadDomains.end() &&
+            emptyWrite != syncWriteDomains.end()) {
+          if (std::distance(syncReadDomains.begin(), emptyRead) ==
+              std::distance(syncWriteDomains.begin(), emptyWrite)) {
+            size_t idx = std::distance(syncReadDomains.begin(), emptyRead);
+            if (syncSchemes[idx].empty()) {
+              return access;
+            }
+          }
+        }
+      }
+    }
+
+    if (access.readDomains.size() > 1) {
+      access.access = (DomainAccess)(access.access | ACCESS_MDR);
+    } else if (access.readDomains.size() == 1) {
+      access.access = (DomainAccess)(access.access | ACCESS_SDR);
+    }
+    if (access.writeDomains.size() > 1) {
+      access.access = (DomainAccess)(access.access | ACCESS_MDW);
+    } else if (access.writeDomains.size() == 1) {
+      access.access = (DomainAccess)(access.access | ACCESS_SDW);
+    }
+  }
+  return access;
 }

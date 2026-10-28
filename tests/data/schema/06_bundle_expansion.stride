@@ -1,0 +1,27 @@
+type ObjType {
+    typeName: "objType"
+    properties: [	
+        typeProperty {
+			name: "port"
+			types: [
+                ObjType2,
+            ]
+			default: none
+			required: on
+		}
+    ]
+}
+
+type ObjType2 {
+    typeName: "objType2"
+    properties: [
+    ]
+}
+
+objType2 Obj2[5] {}
+
+# Should be expanded
+objType Obj { port: Obj2 }
+
+
+#Should not be expanded
