@@ -1207,6 +1207,118 @@ static ASTNode expandRangesInASTNode(ASTNode node, const ScopeStack &scope,
   return node;
 }
 
+// Automatic broadcasting: decides whether a call written F() runs as several
+// instances, as if written F[](). A function that takes W values (W > 1),
+// given a list of W items where some are bundles of width N and the others
+// single values, runs N times; single values are repeated for each
+// instance. A function that takes one value, given N values, runs N times.
+// Whole bundles named without a range count with their declared size.
+// Returns the number of instances, or 0 to leave the call as it is (also
+// when widths do not match, which the validator reports). On a broadcast,
+// left is rewritten with bundles as lists of their elements.
+static int64_t autoBroadcastCount(ASTNode &left,
+                                  std::shared_ptr<FunctionNode> funcNode,
+                                  const ScopeStack &scope, ASTNode tree) {
+  if (!left || funcNode->getCompilerProperty("_bundleIndices")) {
+    return 0;
+  }
+  auto funcDecl = ASTQuery::findDeclarationByName(
+      funcNode->getName(), scope, tree, funcNode->getNamespaceList());
+  if (!funcDecl) {
+    return 0;
+  }
+  const int numInputs =
+      CodeAnalysis::getTypeNumInputs(funcDecl, scope, tree, nullptr);
+  if (numInputs < 1) {
+    return 0; // No input, or a width set by the input (AllOn, variadic)
+  }
+  const std::vector<ASTNode> items = left->getNodeType() == AST::List
+                                         ? left->getChildren()
+                                         : std::vector<ASTNode>{left};
+  // Each item as a list of its elements, or as itself for a single value
+  std::vector<ASTNode> expandedItems;
+  std::vector<int64_t> widths;
+  for (const auto &item : items) {
+    if (item->getNodeType() == AST::List) {
+      expandedItems.push_back(item);
+      widths.push_back(static_cast<int64_t>(item->getChildren().size()));
+    } else if (item->getNodeType() == AST::Entity) {
+      const int size =
+          CodeAnalysis::getNodeNumOutputs(item, scope, tree, nullptr);
+      if (size < 0) {
+        return 0; // Not declared yet
+      }
+      if (size > 1) {
+        auto name = std::static_pointer_cast<EntityNode>(item);
+        auto elements = std::make_shared<ListNode>(
+            nullptr, item->getFilename().c_str(), item->getLine());
+        for (int64_t i = 0; i < size; ++i) {
+          auto indexList = std::make_shared<ListNode>(
+              std::make_shared<ValueNode>(i, item->getFilename().c_str(),
+                                          item->getLine()),
+              item->getFilename().c_str(), item->getLine());
+          elements->addChild(std::make_shared<ArrayNode>(
+              name->getName(), indexList, item->getFilename().c_str(),
+              item->getLine()));
+        }
+        expandedItems.push_back(elements);
+      } else {
+        expandedItems.push_back(item);
+      }
+      widths.push_back(size > 1 ? size : 1);
+    } else {
+      // Single elements, values and expressions
+      expandedItems.push_back(item);
+      widths.push_back(1);
+    }
+  }
+
+  auto newLeft = std::make_shared<ListNode>(nullptr, left->getFilename().c_str(),
+                                            left->getLine());
+  int64_t count = 0;
+  if (numInputs == 1) {
+    // One value per instance: all elements in order
+    for (const auto &item : expandedItems) {
+      if (item->getNodeType() == AST::List) {
+        for (const auto &element : item->getChildren()) {
+          newLeft->addChild(element);
+        }
+      } else {
+        newLeft->addChild(item);
+      }
+    }
+    count = static_cast<int64_t>(newLeft->getChildren().size());
+  } else {
+    if (static_cast<int>(items.size()) != numInputs) {
+      return 0;
+    }
+    for (int64_t width : widths) {
+      if (width > 1) {
+        if (count > 1 && width != count) {
+          // Bundles of different widths: CodeValidator reports it
+          auto widthsNode = std::make_shared<ListNode>(
+              std::make_shared<ValueNode>(count, funcNode->getFilename().c_str(),
+                                          funcNode->getLine()),
+              funcNode->getFilename().c_str(), funcNode->getLine());
+          widthsNode->addChild(std::make_shared<ValueNode>(
+              width, funcNode->getFilename().c_str(), funcNode->getLine()));
+          funcNode->setCompilerProperty("_broadcastMismatch", widthsNode);
+          return 0;
+        }
+        count = width;
+      }
+    }
+    for (const auto &item : expandedItems) {
+      newLeft->addChild(item);
+    }
+  }
+  if (count <= 1) {
+    return 0;
+  }
+  left = newLeft;
+  return count;
+}
+
 // Expands a stream through a multi-instance function (F[]()) into one stream
 // per instance. Bundles the caller must declare (name, size) to hold the
 // instance outputs are appended to newBundles.
@@ -1251,6 +1363,10 @@ static std::vector<ASTNode> expandSingleIndexedStream(
   auto multiInstProp = funcNode->getCompilerProperty("_multiInstance");
   if (!multiInstProp) {
     multiInstProp = funcNode->getCompilerProperty("_arrayIndices");
+  }
+  if (!multiInstProp && autoBroadcastCount(left, funcNode, scope, tree) > 0) {
+    multiInstProp = std::make_shared<ValueNode>(
+        true, funcNode->getFilename().c_str(), funcNode->getLine());
   }
   if (!multiInstProp) {
     if (left && left->getNodeType() == AST::List) {
