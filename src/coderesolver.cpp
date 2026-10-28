@@ -36,17 +36,18 @@
 #include "stride/utils/astquery.h"
 
 #include <algorithm>
-#include <functional>
-#include <map>
 #include <cassert>
+#include <functional>
 #include <iostream>
+#include <map>
 #include <set>
 
 using namespace strd;
 
 CodeResolver::CodeResolver(ASTNode tree, std::string striderootDir,
                            SystemConfiguration systemConfig)
-    : m_systemConfig(systemConfig), m_tree(tree), m_striderootDir(striderootDir) {
+    : m_systemConfig(systemConfig), m_tree(tree),
+      m_striderootDir(striderootDir) {
   std::vector<std::shared_ptr<ImportNode>> importList =
       ASTQuery::getImportNodes(tree);
   std::vector<std::shared_ptr<SystemNode>> systems =
@@ -63,7 +64,8 @@ CodeResolver::CodeResolver(ASTNode tree, std::string striderootDir,
     if (!platformNode->hwPlatforms().empty()) {
       targetDev = platformNode->hwPlatforms().at(0);
     }
-    m_policyManager.loadPlatform(striderootDir, platformNode->platformName(), targetDev);
+    m_policyManager.loadPlatform(striderootDir, platformNode->platformName(),
+                                 targetDev);
     for (size_t i = 1; i < systems.size(); i++) {
       std::cerr << "Ignoring system: " << platformNode->platformName()
                 << std::endl;
@@ -77,6 +79,8 @@ CodeResolver::CodeResolver(ASTNode tree, std::string striderootDir,
   } else { // Make a default platform that only inlcudes the common library
     m_system =
         std::make_shared<StrideSystem>(striderootDir, "", -1, -1, importList);
+    // TODO is it Ok to assume JIT for all missing cases? It seems very
+    // practical.
     m_policyManager.loadPlatform(striderootDir, "JIT", "");
   }
 }
@@ -148,7 +152,6 @@ void CodeResolver::process() {
   analyzeStreamDependencies();
 }
 
-
 void CodeResolver::resolvePolicyVariants() {
   std::map<std::string, std::shared_ptr<DeclarationNode>> domains;
   for (const auto &child : m_tree->getChildren()) {
@@ -178,7 +181,8 @@ void CodeResolver::resolvePolicyVariantsForNode(
       getPolicies;
   getPolicies = [&](const std::shared_ptr<DeclarationNode> &dom)
       -> std::pair<std::string, std::vector<std::string>> {
-    if (!dom) return {"", {}};
+    if (!dom)
+      return {"", {}};
     std::string qPolicy;
     std::vector<std::string> vPolicy;
 
@@ -244,19 +248,22 @@ void CodeResolver::resolvePolicyVariantsForNode(
           break;
         }
         for (const auto &pair : m_system->getImportTrees()) {
-          if (ASTQuery::findDeclarationByName(candName, {{nullptr, pair.second}}, nullptr)) {
+          if (ASTQuery::findDeclarationByName(
+                  candName, {{nullptr, pair.second}}, nullptr)) {
             tag = candTag;
             break;
           }
         }
-        if (!tag.empty()) break;
+        if (!tag.empty())
+          break;
       }
     }
 
     if (!tag.empty()) {
       targetNode->setCompilerProperty(
-          "_at", std::make_shared<ValueNode>(tag, targetNode->getFilename().c_str(),
-                                             targetNode->getLine()));
+          "_at",
+          std::make_shared<ValueNode>(tag, targetNode->getFilename().c_str(),
+                                      targetNode->getLine()));
     }
   };
 
@@ -264,7 +271,8 @@ void CodeResolver::resolvePolicyVariantsForNode(
     auto func = std::static_pointer_cast<FunctionNode>(node);
     rewriteNode(func, func->getName());
     for (const auto &prop : func->getProperties()) {
-      resolvePolicyVariantsForNode(prop->getValue(), activeDomain, scope, domains);
+      resolvePolicyVariantsForNode(prop->getValue(), activeDomain, scope,
+                                   domains);
     }
     return;
   }
@@ -324,17 +332,21 @@ void CodeResolver::resolvePolicyVariantsForNode(
 
   if (node->getNodeType() == AST::Property) {
     auto prop = std::static_pointer_cast<PropertyNode>(node);
-    resolvePolicyVariantsForNode(prop->getValue(), activeDomain, scope, domains);
+    resolvePolicyVariantsForNode(prop->getValue(), activeDomain, scope,
+                                 domains);
     return;
   }
 
   if (node->getNodeType() == AST::Expression) {
     auto expr = std::static_pointer_cast<ExpressionNode>(node);
     if (expr->isUnary()) {
-      resolvePolicyVariantsForNode(expr->getValue(), activeDomain, scope, domains);
+      resolvePolicyVariantsForNode(expr->getValue(), activeDomain, scope,
+                                   domains);
     } else {
-      resolvePolicyVariantsForNode(expr->getLeft(), activeDomain, scope, domains);
-      resolvePolicyVariantsForNode(expr->getRight(), activeDomain, scope, domains);
+      resolvePolicyVariantsForNode(expr->getLeft(), activeDomain, scope,
+                                   domains);
+      resolvePolicyVariantsForNode(expr->getRight(), activeDomain, scope,
+                                   domains);
     }
     return;
   }
@@ -532,8 +544,8 @@ void CodeResolver::resolveStreamRates(std::shared_ptr<StreamNode> stream,
     if (rightRate < 0 && rate >= 0) {
       CodeResolver::setNodeRate(rightLeft, rate, scope, m_tree);
     }
-    resolveStreamRates(std::static_pointer_cast<StreamNode>(right), scope,
-                       tree, fallbackToDomainDefault);
+    resolveStreamRates(std::static_pointer_cast<StreamNode>(right), scope, tree,
+                       fallbackToDomainDefault);
   } else {
     rightRate = CodeAnalysis::getNodeRate(right, scope, m_tree);
     if (rightRate < 0) {
@@ -1208,6 +1220,118 @@ static ASTNode expandRangesInASTNode(ASTNode node, const ScopeStack &scope,
   return node;
 }
 
+// Automatic broadcasting: decides whether a call written F() runs as several
+// instances, as if written F[](). A function that takes W values (W > 1),
+// given a list of W items where some are bundles of width N and the others
+// single values, runs N times; single values are repeated for each
+// instance. A function that takes one value, given N values, runs N times.
+// Whole bundles named without a range count with their declared size.
+// Returns the number of instances, or 0 to leave the call as it is (also
+// when widths do not match, which the validator reports). On a broadcast,
+// left is rewritten with bundles as lists of their elements.
+static int64_t autoBroadcastCount(ASTNode &left,
+                                  std::shared_ptr<FunctionNode> funcNode,
+                                  const ScopeStack &scope, ASTNode tree) {
+  if (!left || funcNode->getCompilerProperty("_bundleIndices")) {
+    return 0;
+  }
+  auto funcDecl = ASTQuery::findDeclarationByName(
+      funcNode->getName(), scope, tree, funcNode->getNamespaceList());
+  if (!funcDecl) {
+    return 0;
+  }
+  const int numInputs =
+      CodeAnalysis::getTypeNumInputs(funcDecl, scope, tree, nullptr);
+  if (numInputs < 1) {
+    return 0; // No input, or a width set by the input (AllOn, variadic)
+  }
+  const std::vector<ASTNode> items = left->getNodeType() == AST::List
+                                         ? left->getChildren()
+                                         : std::vector<ASTNode>{left};
+  // Each item as a list of its elements, or as itself for a single value
+  std::vector<ASTNode> expandedItems;
+  std::vector<int64_t> widths;
+  for (const auto &item : items) {
+    if (item->getNodeType() == AST::List) {
+      expandedItems.push_back(item);
+      widths.push_back(static_cast<int64_t>(item->getChildren().size()));
+    } else if (item->getNodeType() == AST::Entity) {
+      const int size =
+          CodeAnalysis::getNodeNumOutputs(item, scope, tree, nullptr);
+      if (size < 0) {
+        return 0; // Not declared yet
+      }
+      if (size > 1) {
+        auto name = std::static_pointer_cast<EntityNode>(item);
+        auto elements = std::make_shared<ListNode>(
+            nullptr, item->getFilename().c_str(), item->getLine());
+        for (int64_t i = 0; i < size; ++i) {
+          auto indexList = std::make_shared<ListNode>(
+              std::make_shared<ValueNode>(i, item->getFilename().c_str(),
+                                          item->getLine()),
+              item->getFilename().c_str(), item->getLine());
+          elements->addChild(std::make_shared<ArrayNode>(
+              name->getName(), indexList, item->getFilename().c_str(),
+              item->getLine()));
+        }
+        expandedItems.push_back(elements);
+      } else {
+        expandedItems.push_back(item);
+      }
+      widths.push_back(size > 1 ? size : 1);
+    } else {
+      // Single elements, values and expressions
+      expandedItems.push_back(item);
+      widths.push_back(1);
+    }
+  }
+
+  auto newLeft = std::make_shared<ListNode>(
+      nullptr, left->getFilename().c_str(), left->getLine());
+  int64_t count = 0;
+  if (numInputs == 1) {
+    // One value per instance: all elements in order
+    for (const auto &item : expandedItems) {
+      if (item->getNodeType() == AST::List) {
+        for (const auto &element : item->getChildren()) {
+          newLeft->addChild(element);
+        }
+      } else {
+        newLeft->addChild(item);
+      }
+    }
+    count = static_cast<int64_t>(newLeft->getChildren().size());
+  } else {
+    if (static_cast<int>(items.size()) != numInputs) {
+      return 0;
+    }
+    for (int64_t width : widths) {
+      if (width > 1) {
+        if (count > 1 && width != count) {
+          // Bundles of different widths: CodeValidator reports it
+          auto widthsNode = std::make_shared<ListNode>(
+              std::make_shared<ValueNode>(
+                  count, funcNode->getFilename().c_str(), funcNode->getLine()),
+              funcNode->getFilename().c_str(), funcNode->getLine());
+          widthsNode->addChild(std::make_shared<ValueNode>(
+              width, funcNode->getFilename().c_str(), funcNode->getLine()));
+          funcNode->setCompilerProperty("_broadcastMismatch", widthsNode);
+          return 0;
+        }
+        count = width;
+      }
+    }
+    for (const auto &item : expandedItems) {
+      newLeft->addChild(item);
+    }
+  }
+  if (count <= 1) {
+    return 0;
+  }
+  left = newLeft;
+  return count;
+}
+
 // Expands a stream through a multi-instance function (F[]()) into one stream
 // per instance. Bundles the caller must declare (name, size) to hold the
 // instance outputs are appended to newBundles.
@@ -1252,6 +1376,10 @@ static std::vector<ASTNode> expandSingleIndexedStream(
   auto multiInstProp = funcNode->getCompilerProperty("_multiInstance");
   if (!multiInstProp) {
     multiInstProp = funcNode->getCompilerProperty("_arrayIndices");
+  }
+  if (!multiInstProp && autoBroadcastCount(left, funcNode, scope, tree) > 0) {
+    multiInstProp = std::make_shared<ValueNode>(
+        true, funcNode->getFilename().c_str(), funcNode->getLine());
   }
   if (!multiInstProp) {
     if (left && left->getNodeType() == AST::List) {
@@ -1439,8 +1567,8 @@ static std::vector<ASTNode> expandSingleIndexedStream(
   // Bundle holding the instance outputs when a function follows them
   std::shared_ptr<ListNode> bundleElements;
   if (outputsToBundle) {
-    std::string bundleName = "__" + originFuncName + "_Out" +
-                             std::to_string(currentGroupId);
+    std::string bundleName =
+        "__" + originFuncName + "_Out" + std::to_string(currentGroupId);
     newBundles.push_back({bundleName, N});
     bundleElements = std::make_shared<ListNode>(
         nullptr, stream->getFilename().c_str(), stream->getLine());
@@ -1532,13 +1660,12 @@ static std::vector<ASTNode> expandSingleIndexedStream(
                                             stream->getFilename().c_str(),
                                             stream->getLine());
       }
-      continuation = std::make_shared<StreamNode>(
-          bundleElements, rest, stream->getFilename().c_str(),
-          stream->getLine());
+      continuation = std::make_shared<StreamNode>(bundleElements, rest,
+                                                  stream->getFilename().c_str(),
+                                                  stream->getLine());
     } else {
       continuation = std::make_shared<StreamNode>(
-          tailHead, tailRest, stream->getFilename().c_str(),
-          stream->getLine());
+          tailHead, tailRest, stream->getFilename().c_str(), stream->getLine());
     }
     // The continuation may itself go through a multi-instance function
     auto expandedContinuation =
@@ -1576,74 +1703,75 @@ void CodeResolver::expandIndexedStreams() {
   std::function<void(ASTNode, std::shared_ptr<DeclarationNode>)>
       processContainer = [&](ASTNode container,
                              std::shared_ptr<DeclarationNode> owner) {
-    if (!container)
-      return;
-    auto children = container->getChildren();
-    std::vector<ASTNode> newChildren;
-    bool modified = false;
+        if (!container)
+          return;
+        auto children = container->getChildren();
+        std::vector<ASTNode> newChildren;
+        bool modified = false;
 
-    for (const auto &child : children) {
-      if (child->getNodeType() == AST::Stream) {
-        auto stream = std::static_pointer_cast<StreamNode>(child);
-        std::vector<std::pair<std::string, int64_t>> newBundles;
-        auto expanded =
-            expandSingleIndexedStream(stream, {}, m_tree, newBundles);
-        declareBundles(newBundles, owner);
-        if (!expanded.empty()) {
-          newChildren.insert(newChildren.end(), expanded.begin(),
-                             expanded.end());
-          modified = true;
-        } else {
-          newChildren.push_back(child);
-        }
-      } else {
-        newChildren.push_back(child);
-        if (child->getNodeType() == AST::Declaration ||
-            child->getNodeType() == AST::ArrayDeclaration) {
-          auto decl = std::static_pointer_cast<DeclarationNode>(child);
-          const std::vector<std::string> streamProps = {
-              "streams",   "updateGuard", "onEntry",
-              "onProcess", "onExit",      "onTransition"};
-          for (const auto &propName : streamProps) {
-            auto streams = decl->getPropertyValue(propName);
-            if (streams) {
-              if (streams->getNodeType() == AST::List) {
-                processContainer(streams, decl);
-              } else if (streams->getNodeType() == AST::Stream) {
-                auto stream = std::static_pointer_cast<StreamNode>(streams);
-                std::vector<std::pair<std::string, int64_t>> newBundles;
-                auto expanded =
-                    expandSingleIndexedStream(stream, {}, m_tree, newBundles);
-                declareBundles(newBundles, decl);
-                if (!expanded.empty()) {
-                  auto newStreamsList = std::make_shared<ListNode>(
-                      nullptr, streams->getFilename().c_str(),
-                      streams->getLine());
-                  for (const auto &s : expanded) {
-                    newStreamsList->addChild(s);
+        for (const auto &child : children) {
+          if (child->getNodeType() == AST::Stream) {
+            auto stream = std::static_pointer_cast<StreamNode>(child);
+            std::vector<std::pair<std::string, int64_t>> newBundles;
+            auto expanded =
+                expandSingleIndexedStream(stream, {}, m_tree, newBundles);
+            declareBundles(newBundles, owner);
+            if (!expanded.empty()) {
+              newChildren.insert(newChildren.end(), expanded.begin(),
+                                 expanded.end());
+              modified = true;
+            } else {
+              newChildren.push_back(child);
+            }
+          } else {
+            newChildren.push_back(child);
+            if (child->getNodeType() == AST::Declaration ||
+                child->getNodeType() == AST::ArrayDeclaration) {
+              auto decl = std::static_pointer_cast<DeclarationNode>(child);
+              const std::vector<std::string> streamProps = {
+                  "streams",   "updateGuard", "onEntry",
+                  "onProcess", "onExit",      "onTransition"};
+              for (const auto &propName : streamProps) {
+                auto streams = decl->getPropertyValue(propName);
+                if (streams) {
+                  if (streams->getNodeType() == AST::List) {
+                    processContainer(streams, decl);
+                  } else if (streams->getNodeType() == AST::Stream) {
+                    auto stream = std::static_pointer_cast<StreamNode>(streams);
+                    std::vector<std::pair<std::string, int64_t>> newBundles;
+                    auto expanded = expandSingleIndexedStream(
+                        stream, {}, m_tree, newBundles);
+                    declareBundles(newBundles, decl);
+                    if (!expanded.empty()) {
+                      auto newStreamsList = std::make_shared<ListNode>(
+                          nullptr, streams->getFilename().c_str(),
+                          streams->getLine());
+                      for (const auto &s : expanded) {
+                        newStreamsList->addChild(s);
+                      }
+                      decl->replacePropertyValue(propName, newStreamsList);
+                    }
                   }
-                  decl->replacePropertyValue(propName, newStreamsList);
                 }
               }
-            }
-          }
-          for (const auto &p : decl->getProperties()) {
-            if (p->getValue() && p->getValue()->getNodeType() == AST::List) {
-              for (const auto &item : p->getValue()->getChildren()) {
-                if (item->getNodeType() == AST::Declaration) {
-                  processContainer(p->getValue(), decl);
-                  break;
+              for (const auto &p : decl->getProperties()) {
+                if (p->getValue() &&
+                    p->getValue()->getNodeType() == AST::List) {
+                  for (const auto &item : p->getValue()->getChildren()) {
+                    if (item->getNodeType() == AST::Declaration) {
+                      processContainer(p->getValue(), decl);
+                      break;
+                    }
+                  }
                 }
               }
             }
           }
         }
-      }
-    }
-    if (modified) {
-      container->setChildren(newChildren);
-    }
-  };
+        if (modified) {
+          container->setChildren(newChildren);
+        }
+      };
 
   processContainer(m_tree, nullptr);
   for (const auto &decl : rootDeclarations) {
@@ -1903,8 +2031,7 @@ void CodeResolver::processDomains() {
     std::vector<ASTNode> streams;
     for (const auto &block :
          ASTQuery::getContainedStreamBlocks(decl, {}, m_tree)) {
-      streams.insert(streams.end(), block.streams.begin(),
-                     block.streams.end());
+      streams.insert(streams.end(), block.streams.begin(), block.streams.end());
     }
     applyDomainOfUsedGlobals(decl, streams);
   }
@@ -2177,8 +2304,8 @@ void CodeResolver::resolveDataTypeForDeclaration(
       (!typeNode || typeNode->getNodeType() == AST::None)) {
     // The first member of the class is the default
     auto defaultType = ASTQuery::getNodeName(typesNode->getChildren().front());
-    decl->setPropertyValue("type", std::make_shared<EntityNode>(
-                                       defaultType, __FILE__, __LINE__));
+    decl->setPropertyValue(
+        "type", std::make_shared<EntityNode>(defaultType, __FILE__, __LINE__));
   }
 
   // Recurse into internal declarations (e.g. module blocks)
@@ -3134,18 +3261,19 @@ CodeResolver::createSignalDeclaration(std::string name, int size,
   int line = tree ? tree->getLine() : -1;
   int column = tree ? tree->getColumn() : -1;
   if (size == 0) { // Is it OK to generate a signal of size 1 in this case??
-    newBlock = std::make_shared<DeclarationNode>(name, "signal", nullptr,
-                                                 fname, line, column);
+    newBlock = std::make_shared<DeclarationNode>(name, "signal", nullptr, fname,
+                                                 line, column);
   } else if (size == 1) {
-    newBlock = std::make_shared<DeclarationNode>(name, "signal", nullptr,
-                                                 fname, line, column);
+    newBlock = std::make_shared<DeclarationNode>(name, "signal", nullptr, fname,
+                                                 line, column);
   } else if (size > 1) {
     std::shared_ptr<ListNode> indexList = std::make_shared<ListNode>(
-        std::make_shared<ValueNode>((int64_t)size, fname, line, column), fname, line, column);
+        std::make_shared<ValueNode>((int64_t)size, fname, line, column), fname,
+        line, column);
     std::shared_ptr<ArrayNode> arrayNode =
         std::make_shared<ArrayNode>(name, indexList, fname, line, column);
-    newBlock =
-        std::make_shared<DeclarationNode>(arrayNode, "signal", nullptr, fname, line, column);
+    newBlock = std::make_shared<DeclarationNode>(arrayNode, "signal", nullptr,
+                                                 fname, line, column);
   }
   assert(newBlock);
   // Lets the resolver turn it into a switch or string once its type is known
@@ -3165,8 +3293,8 @@ void CodeResolver::setNodeRate(ASTNode node, double rate, ScopeStack scope,
   if (!node || rate < 0) {
     return;
   }
-  node->setCompilerProperty("rate",
-                            std::make_shared<ValueNode>(rate, __FILE__, __LINE__));
+  node->setCompilerProperty(
+      "rate", std::make_shared<ValueNode>(rate, __FILE__, __LINE__));
   if (node->getNodeType() == AST::Entity) {
     EntityNode *name = static_cast<EntityNode *>(node.get());
     std::shared_ptr<DeclarationNode> declaration =
@@ -4029,9 +4157,8 @@ void CodeResolver::setPortAttributesForBlock(
     auto type = blockDecl->getPropertyValue("type");
     if (!type || type->getNodeType() == AST::None) {
       blockDecl->setPropertyValue(
-          "type",
-          std::make_shared<MemberAccessNode>(portName, "type", __FILE__,
-                                             __LINE__));
+          "type", std::make_shared<MemberAccessNode>(portName, "type", __FILE__,
+                                                     __LINE__));
     }
   }
   // Blocks that are not rated are reactive and take the rate of the writer
@@ -4041,9 +4168,8 @@ void CodeResolver::setPortAttributesForBlock(
         (rate->getNodeType() == AST::Int &&
          std::static_pointer_cast<ValueNode>(rate)->getIntValue() < 0)) {
       blockDecl->setPropertyValue(
-          "rate",
-          std::make_shared<MemberAccessNode>(portName, "rate", __FILE__,
-                                             __LINE__));
+          "rate", std::make_shared<MemberAccessNode>(portName, "rate", __FILE__,
+                                                     __LINE__));
     }
   }
 }
@@ -4344,8 +4470,8 @@ void CodeResolver::sliceDomainsInNode(std::shared_ptr<DeclarationNode> module,
 // Domain shared by all the root-level blocks used in the streams. Returns null
 // when they use no domain or more than one. Constants have no domain and do not
 // count.
-ASTNode CodeResolver::getDomainOfUsedGlobals(
-    const std::vector<ASTNode> &streams) {
+ASTNode
+CodeResolver::getDomainOfUsedGlobals(const std::vector<ASTNode> &streams) {
   ASTNode found;
   std::string foundId;
   bool conflict = false;
@@ -4384,9 +4510,9 @@ ASTNode CodeResolver::getDomainOfUsedGlobals(
 // Otherwise a block fed only by constants, which have no domain, would take a
 // port-relative domain (InputPort.domain) that function instances cannot be
 // placed in.
-ASTNode CodeResolver::applyDomainOfUsedGlobals(
-    std::shared_ptr<DeclarationNode> module,
-    const std::vector<ASTNode> &streams) {
+ASTNode
+CodeResolver::applyDomainOfUsedGlobals(std::shared_ptr<DeclarationNode> module,
+                                       const std::vector<ASTNode> &streams) {
   auto globalsDomain = getDomainOfUsedGlobals(streams);
   if (!globalsDomain) {
     return nullptr;
@@ -4397,8 +4523,9 @@ ASTNode CodeResolver::applyDomainOfUsedGlobals(
   if (ports && ports->getNodeType() == AST::List) {
     for (const auto &port : ports->getChildren()) {
       if (port->getNodeType() == AST::Declaration) {
-        auto portBlock = std::static_pointer_cast<DeclarationNode>(port)
-                             ->getPropertyValue("block");
+        auto portBlock =
+            std::static_pointer_cast<DeclarationNode>(port)->getPropertyValue(
+                "block");
         if (portBlock) {
           portBlocks.insert(ASTQuery::getNodeName(portBlock));
         }

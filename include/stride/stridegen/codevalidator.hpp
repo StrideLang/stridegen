@@ -58,6 +58,11 @@ public:
   // LossyConversion warning with tokens {from, to, reason}.
   static std::vector<LangError> findLossyConversions(ASTNode tree);
 
+  // Calls in a resolved tree that could not be broadcast automatically
+  // because their input bundles have different widths ([A[0:8], B[0:7]] >>
+  // Equal()). Each one is a StreamMemberSizeMismatch error.
+  static std::vector<LangError> findBroadcastMismatches(ASTNode tree);
+
 private:
   void validateTree(ASTNode tree);
   void validate();

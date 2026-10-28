@@ -216,6 +216,66 @@ std::vector<std::string> CodeValidator::getPlatformErrors() {
   return m_system->getErrors();
 }
 
+namespace {
+// Calls the resolver could not broadcast because their input bundles have
+// different widths (CodeResolver marks them with _broadcastMismatch)
+void collectBroadcastMismatches(ASTNode node, std::vector<LangError> &errors) {
+  if (!node) {
+    return;
+  }
+  if (node->getNodeType() == AST::Function) {
+    auto widths = node->getCompilerProperty("_broadcastMismatch");
+    if (widths && widths->getChildren().size() == 2) {
+      auto width = [&](size_t i) {
+        return std::to_string(std::static_pointer_cast<ValueNode>(
+                                  widths->getChildren()[i])
+                                  ->getIntValue());
+      };
+      LangError error;
+      error.type = LangError::StreamMemberSizeMismatch;
+      error.lineNumber = node->getLine();
+      error.columnNumber = node->getColumn();
+      error.filename = node->getFilename();
+      // "Stream size mismatch. 'Equal() input' provides 9 outs, 8 expected."
+      error.errorTokens.push_back(width(0) + " ");
+      error.errorTokens.push_back(
+          std::static_pointer_cast<FunctionNode>(node)->getName() +
+          "() input");
+      error.errorTokens.push_back(width(1));
+      errors.push_back(error);
+    }
+    for (const auto &property :
+         std::static_pointer_cast<FunctionNode>(node)->getProperties()) {
+      collectBroadcastMismatches(property->getValue(), errors);
+    }
+    return;
+  }
+  if (node->getNodeType() == AST::Declaration ||
+      node->getNodeType() == AST::ArrayDeclaration) {
+    for (const auto &property :
+         std::static_pointer_cast<DeclarationNode>(node)->getProperties()) {
+      collectBroadcastMismatches(property->getValue(), errors);
+    }
+    return;
+  }
+  if (node->getNodeType() == AST::Stream) {
+    auto stream = std::static_pointer_cast<StreamNode>(node);
+    collectBroadcastMismatches(stream->getLeft(), errors);
+    collectBroadcastMismatches(stream->getRight(), errors);
+    return;
+  }
+  for (const auto &child : node->getChildren()) {
+    collectBroadcastMismatches(child, errors);
+  }
+}
+} // namespace
+
+std::vector<LangError> CodeValidator::findBroadcastMismatches(ASTNode tree) {
+  std::vector<LangError> errors;
+  collectBroadcastMismatches(tree, errors);
+  return errors;
+}
+
 void CodeValidator::validate() {
   m_errors.clear();
   m_warnings.clear();
@@ -230,6 +290,9 @@ void CodeValidator::validate() {
     validateArraySizes(m_tree, m_errors, {});
     validateSymbolUniqueness({{nullptr, m_tree->getChildren()}}, m_errors);
     validateStreamSizes(m_tree, m_errors, {});
+    for (const auto &error : findBroadcastMismatches(m_tree)) {
+      m_errors.push_back(error);
+    }
     validateRates(m_tree);
     validateConstraints(m_tree);
   }

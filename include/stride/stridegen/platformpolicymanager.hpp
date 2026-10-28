@@ -1,5 +1,6 @@
 /*
-    Stride is licensed under the terms of the GNU Affero General Public License version 3.
+    Stride is licensed under the terms of the GNU Affero General Public License
+   version 3.
 
     Copyright (C) 2026 Andres Cabrera
     All rights reserved.
@@ -41,16 +42,18 @@ public:
   PlatformPolicyManager();
   ~PlatformPolicyManager();
 
-  // Loads platform definition from <strideroot>/platforms/<platformName>/Platform.stride
-  // If targetDevice is empty, falls back to defaultDevice from Platform.stride.
-  // Resolves the device overlay chain and builds the aggregated policy table and resource list.
+  // Loads platform definition from
+  // <strideroot>/platforms/<platformName>/Platform.stride If targetDevice is
+  // empty, falls back to defaultDevice from Platform.stride. Resolves the
+  // device overlay chain and builds the aggregated policy table and resource
+  // list.
   bool loadPlatform(const std::string &strideroot,
                     const std::string &platformName,
                     const std::string &targetDevice = "");
 
-  // Resolves variant for an unannotated function/entity within a policy context.
-  // Returns targetVariant name (e.g. "Sin@Direct"), and optionally outputs variant tag (e.g. "Direct").
-  // Returns empty string if no rule found.
+  // Resolves variant for an unannotated function/entity within a policy
+  // context. Returns targetVariant name (e.g. "Sin@Direct"), and optionally
+  // outputs variant tag (e.g. "Direct"). Returns empty string if no rule found.
   std::string resolveVariant(const std::string &policyName,
                              const std::string &functionName,
                              std::string *outVariantTag = nullptr) const;
@@ -60,10 +63,15 @@ public:
   const std::string &getPlatformName() const { return m_platformName; }
   const std::string &getTargetDevice() const { return m_targetDevice; }
   const std::string &getCompilerFlags() const { return m_compilerFlags; }
-  const std::vector<std::string> &getHardwareResources() const { return m_resources; }
-  const std::vector<std::string> &getSupportedDevices() const { return m_supportedDevices; }
+  const std::vector<std::string> &getHardwareResources() const {
+    return m_resources;
+  }
+  const std::vector<std::string> &getSupportedDevices() const {
+    return m_supportedDevices;
+  }
 
-  const std::map<std::pair<std::string, std::string>, std::string> &getBindings() const {
+  const std::map<std::pair<std::string, std::string>, std::string> &
+  getBindings() const {
     return m_bindings;
   }
 
@@ -81,9 +89,10 @@ private:
 
   void parsePolicyBindings(const std::shared_ptr<DeclarationNode> &decl,
                            const std::string &propertyName);
-  std::shared_ptr<DeclarationNode> loadDeviceDeclaration(const std::string &strideroot,
-                                                         const std::string &platformName,
-                                                         const std::string &deviceName);
+  std::shared_ptr<DeclarationNode>
+  loadDeviceDeclaration(const std::string &strideroot,
+                        const std::string &platformName,
+                        const std::string &deviceName);
 };
 
 } // namespace strd
