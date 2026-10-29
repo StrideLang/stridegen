@@ -1265,6 +1265,30 @@ CodeAnalysis::getUsedMemberAccesses(std::shared_ptr<DeclarationNode> funcDecl) {
     }
   }
 
+  // A block sized by a port property (`Input[InputPort.size]`) uses it too:
+  // calls inside the function that take the block need the size at run time
+  if (blocksNode) {
+    for (const auto &node : blocksNode->getChildren()) {
+      if (node->getNodeType() != AST::ArrayDeclaration) {
+        continue;
+      }
+      auto index =
+          std::static_pointer_cast<DeclarationNode>(node)->getArrayIndex();
+      if (!index) {
+        continue;
+      }
+      for (const auto &access : getUsedMemberAccessesInNode(index)) {
+        bool known = std::any_of(used.begin(), used.end(), [&](const auto &u) {
+          return u->getEntity() == access->getEntity() &&
+                 u->getPropertyName() == access->getPropertyName();
+        });
+        if (!known) {
+          used.push_back(access);
+        }
+      }
+    }
+  }
+
   return used;
 }
 
@@ -1421,6 +1445,15 @@ int CodeAnalysis::getNodeNumOutputs(ASTNode node, const ScopeStack &scope,
   } else if (node->getNodeType() == AST::MemberAccess) {
     std::shared_ptr<MemberAccessNode> portProp =
         std::static_pointer_cast<MemberAccessNode>(node);
+    auto entityDecl =
+        ASTQuery::findDeclarationByName(portProp->getEntity(), scope, tree);
+    if (entityDecl && entityDecl->getEntityType() == "buffer") {
+      // A buffer's frame holds its frameSize values; its other members are
+      // scalars
+      return portProp->getPropertyName() == "frame"
+                 ? getTypeNumOutputs(entityDecl, scope, tree, errors)
+                 : 1;
+    }
     if (portProp->getPropertyName() == "size" ||
         portProp->getPropertyName() == "rate" ||
         portProp->getPropertyName() == "domain") {
@@ -1594,7 +1627,7 @@ int CodeAnalysis::getTypeNumOutputs(
       }
     } else if (blockDeclaration->getEntityType() == "buffer") {
       // Reading a buffer yields its current frame: frameSize values, which
-      // defaults to the capacity (half of it for Buffer::ModePingPong).
+      // defaults to the capacity.
       auto evaluateSize = [&](const std::string &name) -> int64_t {
         auto node = blockDeclaration->getPropertyValue(name);
         if (!node || node->getNodeType() == AST::None) {
@@ -1611,10 +1644,7 @@ int CodeAnalysis::getTypeNumOutputs(
       }
       auto capacity = evaluateSize("capacity");
       if (capacity > 0) {
-        auto modeNode = blockDeclaration->getPropertyValue("mode");
-        bool pingPong = modeNode && modeNode->getNodeType() == AST::Entity &&
-                        ASTQuery::getNodeName(modeNode) == "ModePingPong";
-        return static_cast<int>(pingPong ? capacity / 2 : capacity);
+        return static_cast<int>(capacity);
       }
       LOG_ERROR() << "Missing or unexpected capacity property for buffer"
                   << std::endl;
