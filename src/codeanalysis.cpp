@@ -1593,13 +1593,31 @@ int CodeAnalysis::getTypeNumOutputs(
         return outputList->getChildren().size();
       }
     } else if (blockDeclaration->getEntityType() == "buffer") {
-      auto sizeNode = blockDeclaration->getPropertyValue("capacity");
-      if (sizeNode && sizeNode->getNodeType() == AST::Int) {
-        return std::static_pointer_cast<ValueNode>(sizeNode)->getIntValue();
-      } else {
-        LOG_ERROR() << "Missing or unexpected capacity property for buffer"
-                    << std::endl;
+      // Reading a buffer yields its current frame: frameSize values, which
+      // defaults to the capacity (half of it for Buffer::ModePingPong).
+      auto evaluateSize = [&](const std::string &name) -> int64_t {
+        auto node = blockDeclaration->getPropertyValue(name);
+        if (!node || node->getNodeType() == AST::None) {
+          return -1;
+        }
+        std::vector<LangError> sizeErrors;
+        auto size =
+            ASTFunctions::evaluateConstInteger(node, scope, tree, &sizeErrors);
+        return sizeErrors.empty() ? size : -1;
+      };
+      auto frameSize = evaluateSize("frameSize");
+      if (frameSize > 0) {
+        return static_cast<int>(frameSize);
       }
+      auto capacity = evaluateSize("capacity");
+      if (capacity > 0) {
+        auto modeNode = blockDeclaration->getPropertyValue("mode");
+        bool pingPong = modeNode && modeNode->getNodeType() == AST::Entity &&
+                        ASTQuery::getNodeName(modeNode) == "ModePingPong";
+        return static_cast<int>(pingPong ? capacity / 2 : capacity);
+      }
+      LOG_ERROR() << "Missing or unexpected capacity property for buffer"
+                  << std::endl;
     }
     return 1;
   }
