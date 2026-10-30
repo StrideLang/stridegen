@@ -63,6 +63,25 @@ public:
   // Equal()). Each one is a StreamMemberSizeMismatch error.
   static std::vector<LangError> findBroadcastMismatches(ASTNode tree);
 
+  // Writes to constants after their first: a constant with a value is
+  // written by it, and one without a value is written once, by the first
+  // stream that writes it (constant Table[8] { type: Int } filled at setup).
+  // Each later write is a ConstantWrittenTwice error.
+  static std::vector<LangError> findConstantRewrites(ASTNode tree);
+
+  // Calls of functions with blocks sized by a main port whose size nothing
+  // gives: Output[OutputPort.size] takes the size of what the call writes
+  // to, so the call must write to a declared array, element or bundle, and
+  // Input[InputPort.size] needs the call to be fed. Each is an UnsizedPort
+  // error.
+  static std::vector<LangError> findUnsizedPorts(ASTNode tree);
+
+  // Reactions and actions that declare a mainInputPort. Their input is the
+  // trigger that runs them (a switch converts to one), which also sets their
+  // domain, so values reach them through property ports. Each is a
+  // ReactionMainInput error.
+  static std::vector<LangError> findReactionMainInputs(ASTNode tree);
+
 private:
   void validateTree(ASTNode tree);
   void validate();

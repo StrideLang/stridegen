@@ -24,6 +24,7 @@
 
 #include "stride/stridegen/codevalidator.hpp"
 #include "stride/stridegen/codeanalysis.hpp"
+#include "stride/parser/memberaccessnode.h"
 #include "stride/stridegen/stridesystem.hpp"
 #include "stride/utils/astquery.h"
 #include "stride/utils/astruntime.h"
@@ -32,7 +33,9 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <functional>
 #include <iostream>
+#include <map>
 #include <memory>
 #include <set>
 #include <sstream>
@@ -268,7 +271,261 @@ void collectBroadcastMismatches(ASTNode node, std::vector<LangError> &errors) {
     collectBroadcastMismatches(child, errors);
   }
 }
+
+// A place in the source, as "file:line"
+std::string locationOf(const ASTNode &node) {
+  return node->getFilename() + ":" + std::to_string(node->getLine());
+}
+
+// Writes to root constants. A constant with a value is written by its value;
+// one without a value is written once, by the first stream that writes it.
+// Streams the resolver copied or expanded keep their source line, so writes
+// are counted by place. Names declared as blocks of an enclosing declaration
+// (a loop's Output) hide the root constants.
+void collectConstantWrites(ASTNode node, ASTNode tree,
+                           std::set<std::string> &hidden,
+                           std::map<std::string, std::string> &written,
+                           std::vector<LangError> &errors) {
+  if (!node) {
+    return;
+  }
+  auto write = [&](const ASTNode &target) {
+    std::vector<ASTNode> targets;
+    if (target->getNodeType() == AST::List) {
+      targets = target->getChildren();
+    } else {
+      targets.push_back(target);
+    }
+    for (const auto &member : targets) {
+      if (member->getNodeType() != AST::Entity &&
+          member->getNodeType() != AST::Array) {
+        continue;
+      }
+      const std::string name = ASTQuery::getNodeName(member);
+      if (hidden.count(name) > 0) {
+        continue;
+      }
+      auto decl = ASTQuery::findDeclarationByName(name, {}, tree);
+      if (!decl || decl->getEntityType() != "constant") {
+        continue;
+      }
+      const std::string place = locationOf(member);
+      auto previous = written.find(name);
+      if (previous == written.end()) {
+        auto value = decl->getPropertyValue("value");
+        if (value && value->getNodeType() != AST::None) {
+          previous =
+              written.insert({name, "its value at " + locationOf(decl)}).first;
+        } else {
+          written[name] = "the stream at " + place;
+          continue;
+        }
+      }
+      if (previous->second != "the stream at " + place) {
+        LangError error;
+        error.type = LangError::ConstantWrittenTwice;
+        member->copyLocationTo(error);
+        error.errorTokens.push_back(name);
+        error.errorTokens.push_back(previous->second);
+        errors.push_back(error);
+      }
+    }
+  };
+  if (node->getNodeType() == AST::Declaration ||
+      node->getNodeType() == AST::ArrayDeclaration) {
+    auto decl = std::static_pointer_cast<DeclarationNode>(node);
+    std::set<std::string> inner = hidden;
+    if (auto blocks = decl->getPropertyValue("blocks")) {
+      for (const auto &block : blocks->getChildren()) {
+        if (block->getNodeType() == AST::Declaration ||
+            block->getNodeType() == AST::ArrayDeclaration) {
+          inner.insert(
+              std::static_pointer_cast<DeclarationNode>(block)->getName());
+        }
+      }
+    }
+    for (const auto &property : decl->getProperties()) {
+      collectConstantWrites(property->getValue(), tree, inner, written,
+                            errors);
+    }
+    return;
+  }
+  if (node->getNodeType() == AST::Stream) {
+    // Everything after the first member of a stream is written
+    auto stream = std::static_pointer_cast<StreamNode>(node);
+    collectConstantWrites(stream->getLeft(), tree, hidden, written, errors);
+    ASTNode right = stream->getRight();
+    while (right) {
+      ASTNode member = right;
+      if (right->getNodeType() == AST::Stream) {
+        member = std::static_pointer_cast<StreamNode>(right)->getLeft();
+        right = std::static_pointer_cast<StreamNode>(right)->getRight();
+      } else {
+        right = nullptr;
+      }
+      if (member->getNodeType() == AST::Function) {
+        collectConstantWrites(member, tree, hidden, written, errors);
+      } else {
+        write(member);
+      }
+    }
+    return;
+  }
+  if (node->getNodeType() == AST::Function) {
+    for (const auto &property :
+         std::static_pointer_cast<FunctionNode>(node)->getProperties()) {
+      collectConstantWrites(property->getValue(), tree, hidden, written,
+                            errors);
+    }
+    return;
+  }
+  for (const auto &child : node->getChildren()) {
+    collectConstantWrites(child, tree, hidden, written, errors);
+  }
+}
+
+// The name of a function's main port of a kind (mainInputPort,
+// mainOutputPort), if it has one
+std::string mainPortName(const std::shared_ptr<DeclarationNode> &decl,
+                         const std::string &kind) {
+  auto ports = decl->getPropertyValue("ports");
+  if (!ports) {
+    return std::string();
+  }
+  for (const auto &port : ports->getChildren()) {
+    if ((port->getNodeType() == AST::Declaration ||
+         port->getNodeType() == AST::ArrayDeclaration) &&
+        std::static_pointer_cast<DeclarationNode>(port)->getEntityType() ==
+            kind) {
+      return std::static_pointer_cast<DeclarationNode>(port)->getName();
+    }
+  }
+  return std::string();
+}
+
+// Calls of functions whose blocks are sized by a main port (Input[
+// InputPort.size], Output[OutputPort.size]) where nothing gives that size:
+// an output must go to a declared array, element or bundle, and an input
+// must be fed
+void collectUnsizedPorts(ASTNode node, ASTNode tree,
+                         std::vector<LangError> &errors) {
+  if (!node) {
+    return;
+  }
+  if (node->getNodeType() == AST::Function) {
+    auto func = std::static_pointer_cast<FunctionNode>(node);
+    auto decl = ASTQuery::findDeclarationByName(func->getName(), {}, tree);
+    if (decl && (decl->getEntityType() == "module" ||
+                 decl->getEntityType() == "loop" ||
+                 decl->getEntityType() == "reaction")) {
+      const std::string input = mainPortName(decl, "mainInputPort");
+      const std::string output = mainPortName(decl, "mainOutputPort");
+      bool inputSized = false;
+      bool outputSized = false;
+      for (const auto &access : CodeAnalysis::getUsedMemberAccesses(decl)) {
+        if (access->getPropertyName() == "size") {
+          inputSized |= !input.empty() && access->getEntity() == input;
+          outputSized |= !output.empty() && access->getEntity() == output;
+        }
+      }
+      auto report = [&](const std::string &port, const std::string &side,
+                        const std::string &source,
+                        const std::string &requirement) {
+        LangError error;
+        error.type = LangError::UnsizedPort;
+        func->copyLocationTo(error);
+        error.errorTokens = {func->getName(), side, source, port,
+                             requirement};
+        errors.push_back(error);
+      };
+      auto outputBlock = func->getCompilerProperty("outputBlock");
+      if (outputSized &&
+          (!outputBlock || (outputBlock->getNodeType() != AST::Entity &&
+                            outputBlock->getNodeType() != AST::Array &&
+                            outputBlock->getNodeType() != AST::List))) {
+        report(output, "output", "what it writes to",
+               "it must write to a declared array, element or bundle");
+      }
+      if (inputSized && !func->getCompilerProperty("inputBlock")) {
+        report(input, "input", "what feeds it", "it must be fed");
+      }
+    }
+    for (const auto &property : func->getProperties()) {
+      collectUnsizedPorts(property->getValue(), tree, errors);
+    }
+    return;
+  }
+  if (node->getNodeType() == AST::Declaration ||
+      node->getNodeType() == AST::ArrayDeclaration) {
+    for (const auto &property :
+         std::static_pointer_cast<DeclarationNode>(node)->getProperties()) {
+      collectUnsizedPorts(property->getValue(), tree, errors);
+    }
+    return;
+  }
+  if (node->getNodeType() == AST::Stream) {
+    auto stream = std::static_pointer_cast<StreamNode>(node);
+    collectUnsizedPorts(stream->getLeft(), tree, errors);
+    collectUnsizedPorts(stream->getRight(), tree, errors);
+    return;
+  }
+  for (const auto &child : node->getChildren()) {
+    collectUnsizedPorts(child, tree, errors);
+  }
+}
 } // namespace
+
+std::vector<LangError> CodeValidator::findReactionMainInputs(ASTNode tree) {
+  std::vector<LangError> errors;
+  std::function<void(const ASTNode &)> visit = [&](const ASTNode &node) {
+    if (!node) {
+      return;
+    }
+    if (node->getNodeType() == AST::Declaration ||
+        node->getNodeType() == AST::ArrayDeclaration) {
+      auto decl = std::static_pointer_cast<DeclarationNode>(node);
+      if (decl->getEntityType() == "reaction" ||
+          decl->getEntityType() == "action") {
+        const std::string input = mainPortName(decl, "mainInputPort");
+        if (!input.empty()) {
+          LangError error;
+          error.type = LangError::ReactionMainInput;
+          decl->copyLocationTo(error);
+          error.errorTokens = {decl->getEntityType() == "reaction" ? "Reaction"
+                                                                   : "Action",
+                               decl->getName(), input};
+          errors.push_back(error);
+        }
+      }
+      // Reactions declared as blocks of other declarations
+      if (auto blocks = decl->getPropertyValue("blocks")) {
+        for (const auto &block : blocks->getChildren()) {
+          visit(block);
+        }
+      }
+      return;
+    }
+    for (const auto &child : node->getChildren()) {
+      visit(child);
+    }
+  };
+  visit(tree);
+  return errors;
+}
+
+std::vector<LangError> CodeValidator::findUnsizedPorts(ASTNode tree) {
+  std::vector<LangError> errors;
+  collectUnsizedPorts(tree, tree, errors);
+  return errors;
+}
+
+std::vector<LangError> CodeValidator::findConstantRewrites(ASTNode tree) {
+  std::vector<LangError> errors;
+  std::set<std::string> hidden;
+  std::map<std::string, std::string> written;
+  collectConstantWrites(tree, tree, hidden, written, errors);
+  return errors;
+}
 
 std::vector<LangError> CodeValidator::findBroadcastMismatches(ASTNode tree) {
   std::vector<LangError> errors;
@@ -291,6 +548,15 @@ void CodeValidator::validate() {
     validateSymbolUniqueness({{nullptr, m_tree->getChildren()}}, m_errors);
     validateStreamSizes(m_tree, m_errors, {});
     for (const auto &error : findBroadcastMismatches(m_tree)) {
+      m_errors.push_back(error);
+    }
+    for (const auto &error : findConstantRewrites(m_tree)) {
+      m_errors.push_back(error);
+    }
+    for (const auto &error : findUnsizedPorts(m_tree)) {
+      m_errors.push_back(error);
+    }
+    for (const auto &error : findReactionMainInputs(m_tree)) {
       m_errors.push_back(error);
     }
     validateRates(m_tree);

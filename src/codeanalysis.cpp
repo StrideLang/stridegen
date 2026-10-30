@@ -1044,9 +1044,17 @@ int CodeAnalysis::evaluateSizeMemberAccess(
                 std::pair<ASTNode, std::vector<ASTNode>> innerScope =
                     scopeStack.back();
                 scopeStack.pop_back();
-                // We need to look one scope up.
-                portSize = CodeAnalysis::getNodeNumOutputs(
-                    func->getPropertyValue(portName), scopeStack, tree);
+                // We need to look one scope up: the output takes the size of
+                // what the call writes to
+                auto outBlock =
+                    func ? func->getCompilerProperty("outputBlock") : nullptr;
+                if (outBlock) {
+                  portSize = CodeAnalysis::getNodeNumInputs(outBlock,
+                                                            scopeStack, tree);
+                } else if (func) {
+                  portSize = CodeAnalysis::getNodeNumOutputs(
+                      func->getPropertyValue(portName), scopeStack, tree);
+                }
                 scopeStack.push_back(innerScope);
               }
             } else if (portDecl->getEntityType() == "propertyInputPort") {
@@ -1943,8 +1951,9 @@ std::vector<ASTNode> CodeAnalysis::getInputDataTypes(ASTNode node,
       }
       if (decl->getEntityType() == "switch" ||
           decl->getEntityType() == "trigger" ||
-          decl->getEntityType() == "string") {
-        // Builtin data type
+          decl->getEntityType() == "string" ||
+          ASTQuery::isConstant(decl, scope, tree)) {
+        // Builtin data type, or the type of a constant's value
         return {std::make_shared<EntityNode>(
             getDataTypeForDeclaration(decl, scope, tree), __FILE__, __LINE__)};
       } else {
@@ -2285,8 +2294,14 @@ CodeAnalysis::getDataTypeForDeclaration(std::shared_ptr<DeclarationNode> decl,
   } else if (ASTQuery::isConstant(decl, scope, tree)) {
     std::shared_ptr<PropertyNode> property =
         ASTQuery::findPropertyByName(decl->getProperties(), "value");
-    if (property) {
+    if (property && property->getValue() &&
+        property->getValue()->getNodeType() != AST::None) {
       return resolveNodeOutDataType(property->getValue(), scope, tree);
+    }
+    // A constant without a value, written once, declares its type
+    auto typeNode = decl->getPropertyValue("type");
+    if (typeNode && typeNode->getNodeType() == AST::Entity) {
+      return std::static_pointer_cast<EntityNode>(typeNode)->getName();
     }
   } else if (decl->getEntityType() == "string") {
     return DataTypes::String;
