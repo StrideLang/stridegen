@@ -2498,12 +2498,35 @@ std::string CodeAnalysis::resolveRangeDataType(RangeNode *rangenode,
 std::string
 CodeAnalysis::resolveMemberAccessDataType(MemberAccessNode *memberAccess,
                                           ScopeStack scopeStack, ASTNode tree) {
-  // FIXME implement correctly. Should be read from framework?
-  // Should call CodeResolver::resolveMemberAccess then get type
+  if (!memberAccess) {
+    return "";
+  }
   if (memberAccess->getPropertyName() == "size") {
     return DataTypes::Int;
   } else if (memberAccess->getPropertyName() == "rate") {
     return DataTypes::Real;
+  }
+  std::string entityName = memberAccess->getEntity();
+  std::string propName = memberAccess->getPropertyName();
+  if (!entityName.empty()) {
+    auto entityDecl =
+        ASTQuery::findDeclarationByName(entityName, scopeStack, tree);
+    if (entityDecl) {
+      auto propVal = entityDecl->getPropertyValue(propName);
+      if (!propVal) {
+        auto propDecl = ASTQuery::findPropertyDeclaration(
+            entityDecl, propName, scopeStack, tree);
+        if (propDecl) {
+          propVal = propDecl->getPropertyValue("default");
+        }
+      }
+      if (propVal) {
+        std::string type = resolveNodeOutDataType(propVal, scopeStack, tree);
+        if (!type.empty()) {
+          return type;
+        }
+      }
+    }
   }
   return DataTypes::Real;
 }
