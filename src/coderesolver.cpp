@@ -3257,7 +3257,7 @@ std::shared_ptr<DeclarationNode>
 CodeResolver::createSignalDeclaration(std::string name, int size,
                                       ScopeStack scope, ASTNode tree) {
   std::shared_ptr<DeclarationNode> newBlock = nullptr;
-  const char *fname = tree ? tree->getFilename().c_str() : "";
+  std::string fname = tree ? tree->getFilename() : "";
   int line = tree ? tree->getLine() : -1;
   int column = tree ? tree->getColumn() : -1;
   if (size == 0) { // Is it OK to generate a signal of size 1 in this case??
@@ -3417,7 +3417,7 @@ CodeResolver::declareUnknownArray(std::shared_ptr<ArrayNode> arrayNode,
 
 std::shared_ptr<DeclarationNode>
 CodeResolver::createConstantDeclaration(std::string name, ASTNode value) {
-  const char *fname = value ? value->getFilename().c_str() : "";
+  std::string fname = value ? value->getFilename() : "";
   int line = value ? value->getLine() : -1;
   int column = value ? value->getColumn() : -1;
   std::shared_ptr<DeclarationNode> constant = std::make_shared<DeclarationNode>(
