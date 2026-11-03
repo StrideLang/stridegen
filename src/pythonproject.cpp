@@ -319,7 +319,7 @@ void PythonProject::astToJson(ASTNode node, QJsonObject &obj) {
     newObject["ports"] = propObject;
     newObject["filename"] = QString::fromStdString(node->getFilename());
     newObject["line"] = node->getLine();
-    obj["block"] = newObject;
+    obj["entity"] = newObject;
   } else if (node->getNodeType() == AST::ArrayDeclaration) {
     DeclarationNode *decl = static_cast<DeclarationNode *>(node.get());
     QJsonObject newObject;
@@ -389,7 +389,7 @@ void PythonProject::astToJson(ASTNode node, QJsonObject &obj) {
     newObject["ports"] = propObject;
     newObject["filename"] = QString::fromStdString(node->getFilename());
     newObject["line"] = node->getLine();
-    obj["blockbundle"] = newObject;
+    obj["entitybundle"] = newObject;
   } else if (node->getNodeType() == AST::List) {
     QJsonArray list;
     listToJsonArray(std::static_pointer_cast<ListNode>(node), list);
@@ -464,23 +464,23 @@ void PythonProject::functionToJson(std::shared_ptr<FunctionNode> node,
   }
   obj["ports"] = propObject;
   obj["rate"] = CodeAnalysis::getNodeRate(node);
-  auto inputBlock = node->getCompilerProperty("inputBlock");
+  auto inputBlock = node->getCompilerProperty("inputEntity");
   if (inputBlock) {
     if (inputBlock->getNodeType() == AST::Entity) {
-      obj["inputBlock"] = QString::fromStdString(
+      obj["inputEntity"] = QString::fromStdString(
           std::static_pointer_cast<EntityNode>(inputBlock)->getName());
     } else if (inputBlock->getNodeType() == AST::Array) {
-      obj["inputBlock"] = QString::fromStdString(
+      obj["inputEntity"] = QString::fromStdString(
           std::static_pointer_cast<ArrayNode>(inputBlock)->getName());
     }
   }
-  auto outputBlock = node->getCompilerProperty("outputBlock");
+  auto outputBlock = node->getCompilerProperty("outputEntity");
   if (outputBlock) {
     if (outputBlock->getNodeType() == AST::Entity) {
-      obj["outputBlock"] = QString::fromStdString(
+      obj["outputEntity"] = QString::fromStdString(
           std::static_pointer_cast<EntityNode>(outputBlock)->getName());
     } else if (outputBlock->getNodeType() == AST::Array) {
-      obj["outputBlock"] = QString::fromStdString(
+      obj["outputEntity"] = QString::fromStdString(
           std::static_pointer_cast<ArrayNode>(outputBlock)->getName());
     }
   }

@@ -1,5 +1,5 @@
 module InvalidBundle {
-    blocks: [
+    entities: [
         signal MyBundle[2] {}
     ]
     streams: [

@@ -7,13 +7,13 @@ signal Output[2] { type: Int }
 module Mod {
     ports: [
         mainInputPort InputPort {
-            block: ModInput
+            entity: ModInput
         }
         mainOutputPort OutputPort {
-            block: ModOutput
+            entity: ModOutput
         }
     ]
-    blocks: [
+    entities: [
         signal ModInput[InputPort.size] {domain: OutputPort.domain type:OutputPort.type}
         signal ModOutput[2] {domain: OutputPort.domain type:OutputPort.type}
         signal ModInternal[2] {domain: OutputPort.domain type:OutputPort.type}

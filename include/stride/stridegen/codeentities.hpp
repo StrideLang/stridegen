@@ -115,9 +115,9 @@ struct Instance : public CodeEntity {
 struct Reset : public CodeEntity {
   Reset(std::shared_ptr<DeclarationNode> decl) {
     entityType = CodeEntityType::Reset;
-    resetBlockDecl = decl;
+    resetEntityDecl = decl;
   }
-  std::shared_ptr<DeclarationNode> resetBlockDecl;
+  std::shared_ptr<DeclarationNode> resetEntityDecl;
 };
 
 typedef struct {
@@ -132,8 +132,8 @@ typedef struct {
   std::shared_ptr<Instance> functionCall;
   std::shared_ptr<Declaration> declaration;
   std::vector<std::string> parentInstanceNames;
-  std::map<std::string, std::vector<DeclarationMap>> blockInMap;
-  std::map<std::string, std::vector<DeclarationMap>> blockOutMap;
+  std::map<std::string, std::vector<DeclarationMap>> entityInMap;
+  std::map<std::string, std::vector<DeclarationMap>> entityOutMap;
   std::map<std::string, std::string> domainMap;
 } FunctionCall;
 

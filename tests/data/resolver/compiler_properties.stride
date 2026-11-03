@@ -1,13 +1,13 @@
 module PassThrough {
     ports: [
         mainInputPort {
-            block: Input
+            entity: Input
         }
         mainOutputPort {
-            block: Output
+            entity: Output
         }
     ]
-    blocks: [
+    entities: [
         signal Input { type: Real }
         signal Output { type: Real }
     ]

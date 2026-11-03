@@ -2,14 +2,14 @@ module InvalidSizes {
     ports: [
         mainInputPort InputPort {
             name: 'input'
-            block: Input
+            entity: Input
         },
         mainOutputPort OutputPort {
             name: 'output'
-            block: Output
+            entity: Output
         }
     ]
-    blocks: [
+    entities: [
         signal Input[3] {},
         signal Output[2] {}
     ]

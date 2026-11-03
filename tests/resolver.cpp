@@ -67,7 +67,7 @@ TEST(Resolver, ResolveBlockPersistence) {
   {
     auto modDecl = ASTQuery::findDeclarationByName("Test", ScopeStack(), tree);
     EXPECT_TRUE(modDecl);
-    auto blocks = modDecl->getPropertyValue("blocks");
+    auto blocks = modDecl->getPropertyValue("entities");
 
     auto decl =
         ASTQuery::findDeclarationByName("WrittenFirst", ScopeStack(), blocks);
@@ -705,7 +705,7 @@ TEST(Resolver, GeneratorRangeInProperties) {
   auto blockMod = ASTQuery::findDeclarationByName("BlockRange", ScopeStack(), tree);
   ASSERT_NE(blockMod, nullptr);
   expectDefault(ASTQuery::findDeclarationByName(
-                    "LocalSig", ScopeStack(), blockMod->getPropertyValue("blocks")),
+                    "LocalSig", ScopeStack(), blockMod->getPropertyValue("entities")),
                 {5, 6, 7, 8});
 
   bool foundFunc = false;

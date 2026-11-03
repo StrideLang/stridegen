@@ -1,13 +1,13 @@
 module Test {
     ports: [
         mainInputPort InputPort {
-            block: ModInput
+            entity: ModInput
         }
         mainOutputPort OutputPort {
-            block: ModOutput
+            entity: ModOutput
         }
     ]
-    blocks: [
+    entities: [
         signal ModInput {}
         signal ModOutput {}
         signal Noop {}

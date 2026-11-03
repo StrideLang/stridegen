@@ -206,7 +206,7 @@ private:
   std::shared_ptr<DeclarationNode> findTypeClass(std::string name,
                                                  std::string framework);
   void setDeclarationType(std::shared_ptr<DeclarationNode> decl, ASTNode type);
-  void setPortAttributesForBlock(std::shared_ptr<DeclarationNode> blockDecl,
+  void setPortAttributesForEntity(std::shared_ptr<DeclarationNode> blockDecl,
                                  std::string portName);
   void changeDeclarationType(std::shared_ptr<DeclarationNode> decl,
                              std::string entityType);

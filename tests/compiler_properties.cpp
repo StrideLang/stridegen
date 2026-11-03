@@ -48,12 +48,12 @@ TEST(CompilerProperties, ModuleInputPortBLock) {
       auto funcNode = stream->getRight()->getChildren()[0];
       EXPECT_TRUE(funcNode);
       EXPECT_EQ(funcNode->getNodeType(), AST::Function);
-      auto inputBlock = funcNode->getCompilerProperty("inputBlock");
+      auto inputBlock = funcNode->getCompilerProperty("inputEntity");
       EXPECT_TRUE(inputBlock);
       EXPECT_EQ(inputBlock->getNodeType(), AST::Entity);
       EXPECT_EQ(std::static_pointer_cast<EntityNode>(inputBlock)->getName(),
                 "OuterInput");
-      auto outputBlock = funcNode->getCompilerProperty("outputBlock");
+      auto outputBlock = funcNode->getCompilerProperty("outputEntity");
       EXPECT_TRUE(outputBlock);
       EXPECT_EQ(outputBlock->getNodeType(), AST::Entity);
       EXPECT_EQ(std::static_pointer_cast<EntityNode>(outputBlock)->getName(),

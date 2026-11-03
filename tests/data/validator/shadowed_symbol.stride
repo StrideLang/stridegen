@@ -4,7 +4,7 @@ signal Level { default: 0.0 }
 
 # A reaction shares its domain's state, so its block Flag hides the global.
 reaction ShadowingReaction {
-    blocks: [
+    entities: [
         switch Flag {}
         switch LocalOnly {}
     ]
@@ -15,7 +15,7 @@ reaction ShadowingReaction {
 
 # Loops are also domain members, so Count hides the global.
 loop ShadowingLoop {
-    blocks: [
+    entities: [
         signal Count { default: 0 type: Int }
         switch Done {}
     ]
@@ -30,13 +30,13 @@ loop ShadowingLoop {
 module NotShadowingModule {
     ports: [
         mainInputPort InputPort {
-            block: Input
+            entity: Input
         },
         mainOutputPort OutputPort {
-            block: Level
+            entity: Level
         }
     ]
-    blocks: [
+    entities: [
         signal Input {},
         signal Level {}
     ]

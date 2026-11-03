@@ -335,7 +335,7 @@ void collectConstantWrites(ASTNode node, ASTNode tree,
       node->getNodeType() == AST::ArrayDeclaration) {
     auto decl = std::static_pointer_cast<DeclarationNode>(node);
     std::set<std::string> inner = hidden;
-    if (auto blocks = decl->getPropertyValue("blocks")) {
+    if (auto blocks = decl->getPropertyValue("entities")) {
       for (const auto &block : blocks->getChildren()) {
         if (block->getNodeType() == AST::Declaration ||
             block->getNodeType() == AST::ArrayDeclaration) {
@@ -438,7 +438,7 @@ void collectUnsizedPorts(ASTNode node, ASTNode tree,
                              requirement};
         errors.push_back(error);
       };
-      auto outputBlock = func->getCompilerProperty("outputBlock");
+      auto outputBlock = func->getCompilerProperty("outputEntity");
       if (outputSized &&
           (!outputBlock || (outputBlock->getNodeType() != AST::Entity &&
                             outputBlock->getNodeType() != AST::Array &&
@@ -446,7 +446,7 @@ void collectUnsizedPorts(ASTNode node, ASTNode tree,
         report(output, "output", "what it writes to",
                "it must write to a declared array, element or bundle");
       }
-      if (inputSized && !func->getCompilerProperty("inputBlock")) {
+      if (inputSized && !func->getCompilerProperty("inputEntity")) {
         report(input, "input", "what feeds it", "it must be fed");
       }
     }
@@ -498,7 +498,7 @@ std::vector<LangError> CodeValidator::findReactionMainInputs(ASTNode tree) {
         }
       }
       // Reactions declared as blocks of other declarations
-      if (auto blocks = decl->getPropertyValue("blocks")) {
+      if (auto blocks = decl->getPropertyValue("entities")) {
         for (const auto &block : blocks->getChildren()) {
           visit(block);
         }
@@ -728,9 +728,9 @@ void CodeValidator::validateSymbolUniqueness(ScopeStack scope,
     if (node->getNodeType() == AST::Declaration) {
       auto decl = std::static_pointer_cast<DeclarationNode>(node);
       if (ASTQuery::isCodeGenerator(decl, scope, m_tree)) {
-        if (decl->getPropertyValue("blocks") &&
+        if (decl->getPropertyValue("entities") &&
             decl->getPropertyValue("ports")) {
-          auto blocks = decl->getPropertyValue("blocks")->getChildren();
+          auto blocks = decl->getPropertyValue("entities")->getChildren();
           auto ports = decl->getPropertyValue("ports")->getChildren();
           std::vector<ASTNode> subScope = blocks;
           subScope.insert(subScope.end(), ports.begin(), ports.end());
@@ -758,7 +758,7 @@ void CodeValidator::validateStreamSizes(ASTNode tree,
             decl->getEntityType() == "loop") {
           auto subScope = scope;
           subScope.push_back(
-              {decl, decl->getPropertyValue("blocks")->getChildren()});
+              {decl, decl->getPropertyValue("entities")->getChildren()});
           auto streams = decl->getPropertyValue("streams")->getChildren();
           for (auto node : streams) {
             if (node->getNodeType() == AST::Stream) {
@@ -916,7 +916,7 @@ void CodeValidator::validateFunctionConstraints(
     return;
   }
   auto constraintsNode = declaration->getPropertyValue("constraints");
-  auto blocks = declaration->getPropertyValue("blocks");
+  auto blocks = declaration->getPropertyValue("entities");
 
   if (blocks) {
     scopeStack.push_back({nullptr, blocks->getChildren()});

@@ -413,7 +413,7 @@ std::vector<std::string> StrideSystem::getPlatformTypeNames() {
             std::static_pointer_cast<DeclarationNode>(node);
         if (decl->getEntityType() == "type" ||
             decl->getEntityType() == "platformModule" ||
-            decl->getEntityType() == "platformBlock") {
+            decl->getEntityType() == "platformEntity") {
           ValueNode *name = static_cast<ValueNode *>(
               decl->getPropertyValue("typeName").get());
           if (name && name->getNodeType() == AST::String) {
@@ -1048,7 +1048,7 @@ void StrideSystem::generateDomainConnections(ASTNode tree) {
               domainChangeNodes.destStreams) {
             stream->setRight(domainChangeNodes.sourceStreams->getChildren()[0]
                                  ->getChildren()[1]);
-            stream->getRight()->setCompilerProperty("inputBlock",
+            stream->getRight()->setCompilerProperty("inputEntity",
                                                     stream->getLeft());
             auto previousFramework =
                 CodeAnalysis::getFrameworkForDomain(previousDomainId, tree);
@@ -1063,7 +1063,7 @@ void StrideSystem::generateDomainConnections(ASTNode tree) {
             auto connectionNode =
                 domainChangeNodes.destStreams->getChildren()[0]
                     ->getChildren()[0];
-            connectionNode->setCompilerProperty("outputBlock", next);
+            connectionNode->setCompilerProperty("outputEntity", next);
             auto destFramework =
                 CodeAnalysis::getFrameworkForDomain(nextDomainId, tree);
             // We should validate with provided connection framework

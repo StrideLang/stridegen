@@ -3,13 +3,13 @@
 module PassThroughForward {
     ports: [
         mainInputPort InputPort {
-            block: Input
+            entity: Input
         }
         mainOutputPort OutputPort {
-            block: Output
+            entity: Output
         }
     ]
-    blocks: [
+    entities: [
         signal Input { type: InputPort.type}
         signal Output { type: InputPort.type}
     ]
@@ -35,13 +35,13 @@ ForwardModuleInNotResolved >> PassThroughForward() >> ForwardModuleOutInt; # rev
 module PassThrough {
     ports: [
         mainInputPort InputPort {
-            block: Input
+            entity: Input
         }
         mainOutputPort OutputPort {
-            block: Output
+            entity: Output
         }
     ]
-    blocks: [
+    entities: [
         signal Input { type: OutputPort.type}
         signal Output { type: OutputPort.type}
     ]
@@ -66,13 +66,13 @@ ModuleInResolved >> PassThrough() >> ModuleOutInt; # reverse resolve
 module PassThroughWithType {
     ports: [
         mainInputPort {
-            block: Input
+            entity: Input
         }
         mainOutputPort {
-            block: Output
+            entity: Output
         }
     ]
-    blocks: [
+    entities: [
         signal Input { type: Real }
         signal Output { type: Real }
     ]

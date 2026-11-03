@@ -13,10 +13,10 @@ platformModule IsBigger {
 # a type to an undeclared block.
 module FromOutput {
     ports: [
-        mainInputPort InputPort { block: Input }
-        mainOutputPort OutputPort { block: Output }
+        mainInputPort InputPort { entity: Input }
+        mainOutputPort OutputPort { entity: Output }
     ]
-    blocks: [
+    entities: [
         signal Input { type: Int }
         signal Output { type: OutputPort.type }
     ]

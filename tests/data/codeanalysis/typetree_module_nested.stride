@@ -3,13 +3,13 @@
 module NestedMod {
     ports: [
         mainInputPort InputPort {
-            block: NestedModInput
+            entity: NestedModInput
         }
         mainOutputPort OutputPort {
-            block: NestedModOutput
+            entity: NestedModOutput
         }
     ]
-    blocks: [
+    entities: [
         signal NestedModInput {domain: OutputPort.domain type:OutputPort.type}
         signal NestedModOutput {domain: OutputPort.domain type:OutputPort.type}
         signal NestedModInternal {domain: OutputPort.domain type:OutputPort.type}
@@ -22,13 +22,13 @@ module NestedMod {
 module NestingMod {
     ports: [
         mainInputPort InputPort {
-            block: NestingModInput
+            entity: NestingModInput
         }
         mainOutputPort OutputPort {
-            block: NestingModOutput
+            entity: NestingModOutput
         }
     ]
-    blocks: [
+    entities: [
         signal NestingModInput {domain: OutputPort.domain type:OutputPort.type}
         signal NestingModOutput {domain: OutputPort.domain type:OutputPort.type}
         signal NestingModInternal {domain: OutputPort.domain type:OutputPort.type}
@@ -50,10 +50,10 @@ signal Output { type: Int }
 reaction NestedReaction {
     ports: [
         mainOutputPort OutputPort {
-            block: NestedReactionOutput
+            entity: NestedReactionOutput
         }
     ]
-    blocks: [
+    entities: [
         signal NestedReactionOutput {domain: OutputPort.domain type:OutputPort.type}
         signal NestedReactionInternal {domain: OutputPort.domain type:OutputPort.type}
     ]
@@ -65,13 +65,13 @@ reaction NestedReaction {
 module Mod {
     ports: [
         mainInputPort InputPort {
-            block: ModInput
+            entity: ModInput
         }
         mainOutputPort OutputPort {
-            block: ModOutput
+            entity: ModOutput
         }
     ]
-    blocks: [
+    entities: [
         signal ModInput {domain: OutputPort.domain type:OutputPort.type}
         signal ModOutput {domain: OutputPort.domain type:OutputPort.type}
         signal ModInternal {domain: OutputPort.domain type:OutputPort.type}
@@ -91,13 +91,13 @@ signal Output { type: Int }
 loop NestedLoop {
 	ports: [
 		mainInputPort InputPort {
-			block: Input
+			entity: Input
 		}
 		mainOutputPort OutputPort {
-			block: Output
+			entity: Output
 		}
 	]
-	blocks: [
+	entities: [
 		signal Input { type: Int }
 		signal Output {default: 0 type: Int }
 		signal Index { default: 0 type: Int }
@@ -114,13 +114,13 @@ loop NestedLoop {
 module ModWithLoop {
     ports: [
         mainInputPort InputPort {
-            block: ModInput
+            entity: ModInput
         }
         mainOutputPort OutputPort {
-            block: ModOutput
+            entity: ModOutput
         }
     ]
-    blocks: [
+    entities: [
         signal ModInput {domain: OutputPort.domain type:OutputPort.type}
         signal ModOutput {domain: OutputPort.domain type:OutputPort.type}
         signal ModInternal {domain: OutputPort.domain type:OutputPort.type}
@@ -137,13 +137,13 @@ Input >> ModWithLoop() >> Output;
 module ModulePersistentVar {
     ports: [
         mainInputPort InputPort {
-            block: Input
+            entity: Input
         }
         mainOutputPort OutputPort {
-            block: Output
+            entity: Output
         }
     ]
-    blocks: [
+    entities: [
         signal Input {domain: OutputPort.domain type:OutputPort.type}
         signal Output {domain: OutputPort.domain type:OutputPort.type}
         signal InternalPersistent {domain: OutputPort.domain type:OutputPort.type}

@@ -27,7 +27,7 @@ signal DescendingSig[4] {
 }
 
 module BlockRange {
-    blocks: [
+    entities: [
         signal LocalSig[4] { default: [5..8] }
     ]
 }
