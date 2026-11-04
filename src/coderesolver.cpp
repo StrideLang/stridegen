@@ -4385,7 +4385,7 @@ void CodeResolver::sliceDomainsInNode(std::shared_ptr<DeclarationNode> module,
     ASTNode streamsNode = module->getPropertyValue("streams");
     ASTNode entitiesNode = module->getPropertyValue("entities");
 
-    assert(blocksNode);
+    assert(entitiesNode);
     if (entitiesNode->getNodeType() == AST::None) {
       module->replacePropertyValue(
           "entities", std::make_shared<ListNode>(nullptr, __FILE__, __LINE__));
