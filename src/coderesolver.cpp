@@ -2572,7 +2572,8 @@ void CodeResolver::analyzeContainerStreamDependencies(
         ASTNode domNode = CodeAnalysis::getNodeDomain(cDecl, scope, m_tree);
         if (domNode) {
           auto dDecl = CodeAnalysis::findDomainDeclaration(
-              CodeAnalysis::getDomainIdentifier(domNode, scope, m_tree), m_tree);
+              CodeAnalysis::getDomainIdentifier(domNode, scope, m_tree),
+              m_tree);
           if (dDecl) {
             info.rate = CodeAnalysis::getDomainDefaultRate(dDecl);
           }
@@ -3771,7 +3772,7 @@ void CodeResolver::declareInternalEntitiesForNode(ASTNode node,
       if (!internalBlocks || internalBlocks->getNodeType() !=
                                  AST::List) { // Turn blocks property into list
         decl->setPropertyValue(
-            "blocks",
+            "entities",
             std::make_shared<ListNode>(internalBlocks, __FILE__, __LINE__));
         internalBlocks = decl->getPropertyValue("entities");
       }
@@ -4382,17 +4383,17 @@ void CodeResolver::sliceDomainsInNode(std::shared_ptr<DeclarationNode> module,
           "loop") { // TODO how to handle different domains within loops and
                     // reactions?
     ASTNode streamsNode = module->getPropertyValue("streams");
-    ASTNode blocksNode = module->getPropertyValue("entities");
+    ASTNode entitiesNode = module->getPropertyValue("entities");
 
     assert(blocksNode);
-    if (blocksNode->getNodeType() == AST::None) {
+    if (entitiesNode->getNodeType() == AST::None) {
       module->replacePropertyValue(
-          "blocks", std::make_shared<ListNode>(nullptr, __FILE__, __LINE__));
-      blocksNode = module->getPropertyValue("entities");
+          "entities", std::make_shared<ListNode>(nullptr, __FILE__, __LINE__));
+      entitiesNode = module->getPropertyValue("entities");
     }
 
     std::vector<ASTNode> new_tree;
-    scopeStack.push_back({module, blocksNode->getChildren()});
+    scopeStack.push_back({module, entitiesNode->getChildren()});
     for (const auto &stream : streamsNode->getChildren()) {
       std::vector<ASTNode> streams = sliceStreamByDomain(
           std::static_pointer_cast<StreamNode>(stream), ScopeStack());
@@ -4401,7 +4402,7 @@ void CodeResolver::sliceDomainsInNode(std::shared_ptr<DeclarationNode> module,
       }
     }
     streamsNode->setChildren(new_tree);
-    for (const auto &declNode : blocksNode->getChildren()) {
+    for (const auto &declNode : entitiesNode->getChildren()) {
       if (declNode->getNodeType() == AST::Declaration) {
         sliceDomainsInNode(std::static_pointer_cast<DeclarationNode>(declNode),
                            scopeStack);
@@ -4429,7 +4430,7 @@ void CodeResolver::sliceDomainsInNode(std::shared_ptr<DeclarationNode> module,
               newStreamsList->addChild(streamNode);
             } else if (streamNode->getNodeType() == AST::Declaration ||
                        streamNode->getNodeType() == AST::ArrayDeclaration) {
-              blocksNode->addChild(streamNode);
+              entitiesNode->addChild(streamNode);
             } else {
               std::cerr << "Stream slicing must result in streams or blocks."
                         << std::endl;
@@ -4445,7 +4446,7 @@ void CodeResolver::sliceDomainsInNode(std::shared_ptr<DeclarationNode> module,
           newStreamsList->addChild(streamNode);
         } else if (streamNode->getNodeType() == AST::Declaration ||
                    streamNode->getNodeType() == AST::ArrayDeclaration) {
-          blocksNode->addChild(streamNode);
+          entitiesNode->addChild(streamNode);
         } else {
           std::cerr << "Stream slicing must result in streams or blocks."
                     << std::endl;
@@ -4453,7 +4454,7 @@ void CodeResolver::sliceDomainsInNode(std::shared_ptr<DeclarationNode> module,
       }
     }
     module->replacePropertyValue("streams", newStreamsList);
-    for (const auto &declNode : blocksNode->getChildren()) {
+    for (const auto &declNode : entitiesNode->getChildren()) {
       if (declNode->getNodeType() == AST::Declaration) {
         // TODO this is untested and likely not completely working...
         std::shared_ptr<DeclarationNode> decl =
@@ -4461,7 +4462,7 @@ void CodeResolver::sliceDomainsInNode(std::shared_ptr<DeclarationNode> module,
         auto internalBlocksNode = decl->getPropertyValue("entities");
         if (internalBlocksNode) {
           auto subScope = scopeStack;
-          subScope.push_back({module, blocksNode->getChildren()});
+          subScope.push_back({module, entitiesNode->getChildren()});
           sliceDomainsInNode(decl, subScope);
         }
       }
@@ -4527,7 +4528,7 @@ CodeResolver::applyDomainOfUsedGlobals(std::shared_ptr<DeclarationNode> module,
       if (port->getNodeType() == AST::Declaration) {
         auto portBlock =
             std::static_pointer_cast<DeclarationNode>(port)->getPropertyValue(
-                "block");
+                "entity");
         if (portBlock) {
           portBlocks.insert(ASTQuery::getNodeName(portBlock));
         }
