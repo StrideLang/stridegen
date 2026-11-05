@@ -102,23 +102,8 @@ namespace {
 
 // Whether a literal value is kept exactly by data type to
 bool literalFits(const ASTNode &node, const DataTypes::Info &to) {
-  auto value = std::static_pointer_cast<ValueNode>(node);
-  if (to.isFloat()) {
-    return true; // Literals are written for the type they go to
-  }
-  if (!to.isInteger()) {
-    return false;
-  }
-  double real = node->getNodeType() == AST::Int
-                    ? static_cast<double>(value->getIntValue())
-                    : value->getRealValue();
-  if (node->getNodeType() == AST::Real && real != std::trunc(real)) {
-    return false;
-  }
-  double minimum = to.isSigned ? -std::ldexp(1.0, to.bits - 1) : 0.0;
-  double maximum = to.isSigned ? std::ldexp(1.0, to.bits - 1) - 1
-                               : std::ldexp(1.0, to.bits) - 1;
-  return real >= minimum && real <= maximum;
+  return DataTypes::literalFits(*std::static_pointer_cast<ValueNode>(node),
+                                to);
 }
 
 void addConversionWarning(const ASTNode &node, const std::string &from,

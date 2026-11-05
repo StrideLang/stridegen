@@ -5450,6 +5450,13 @@ void CodeResolver::resolveTypeCastForStream(std::shared_ptr<StreamNode> stream,
           needsResolution = true;
         }
       }
+      if (needsResolution && validNumericList &&
+          left->getNodeType() == AST::Expression) {
+        // The type of an expression can come from an operand rather than
+        // from promoting both: in UInt8Signal + 1 the literal is a UInt8
+        resolvedType =
+            CodeAnalysis::resolveNodeOutDataType(left, scopeStack, tree);
+      }
       if (needsResolution && validNumericList) {
         for (auto &listNode : left->getChildren()) {
           auto nodeType =
@@ -5467,7 +5474,16 @@ void CodeResolver::resolveTypeCastForStream(std::shared_ptr<StreamNode> stream,
       auto nextType =
           CodeAnalysis::resolveNodeOutDataType(next, scopeStack, tree);
       if (!leftType.empty() && !nextType.empty() && leftType != nextType) {
-        setTypecast(left, leftType, nextType);
+        // Arithmetic streamed to a wider type is done in that type, so
+        // UInt8Signal * 2 >> Int32Signal can be 510
+        auto widened = DataTypes::widenedType(leftType, nextType, tree);
+        if (left->getNodeType() == AST::Expression && widened != leftType) {
+          widenOperands(left, widened, scopeStack, tree);
+          leftType = widened;
+        }
+        if (leftType != nextType) {
+          setTypecast(left, leftType, nextType);
+        }
       }
     }
 
@@ -5493,6 +5509,30 @@ void CodeResolver::setTypecast(ASTNode node, const std::string &from,
   // Read by CodeValidator::findLossyConversions()
   node->setCompilerProperty(
       "typecastFrom", std::make_shared<ValueNode>(from, __FILE__, __LINE__));
+}
+
+void CodeResolver::widenOperands(ASTNode expression, const std::string &type,
+                                 const ScopeStack &scopeStack, ASTNode tree) {
+  for (const auto &operand : expression->getChildren()) {
+    if (operand->getNodeType() == AST::Expression) {
+      widenOperands(operand, type, scopeStack, tree);
+      continue;
+    }
+    // Other operands (function calls, lists) keep their type: the operation
+    // promotes them to the type of the widened operand
+    if (operand->getNodeType() != AST::Int &&
+        operand->getNodeType() != AST::Real &&
+        operand->getNodeType() != AST::Entity &&
+        operand->getNodeType() != AST::Array) {
+      continue;
+    }
+    auto operandType =
+        CodeAnalysis::resolveNodeOutDataType(operand, scopeStack, tree);
+    if (DataTypes::resolve(operandType, tree).isNumeric() &&
+        operandType != type) {
+      setTypecast(operand, operandType, type);
+    }
+  }
 }
 
 void CodeResolver::resolveTypeCastForDeclaration(

@@ -88,6 +88,10 @@ private:
   // Marks node to be converted from data type from to data type to
   static void setTypecast(ASTNode node, const std::string &from,
                           const std::string &to);
+  // Converts the operands of expression, and of the expressions inside it,
+  // to type, so that the arithmetic is done in type
+  static void widenOperands(ASTNode expression, const std::string &type,
+                            const ScopeStack &scopeStack, ASTNode tree);
   void storeDeclarations();
   void analyzeParents();
   void analyzePersistence();

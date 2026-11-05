@@ -2398,10 +2398,8 @@ std::string CodeAnalysis::resolveNodeOutDataType(ASTNode node,
 
 std::string CodeAnalysis::resolveNodeOutDataTypeInternal(
     ASTNode node, const ScopeStack &scopeStack, ASTNode tree) {
-  if (node->getNodeType() == AST::Int) {
-    return DataTypes::Int;
-  } else if (node->getNodeType() == AST::Real) {
-    return DataTypes::Real;
+  if (node->getNodeType() == AST::Int || node->getNodeType() == AST::Real) {
+    return DataTypes::literalType(*std::static_pointer_cast<ValueNode>(node));
   } else if (node->getNodeType() == AST::Switch) {
     return DataTypes::Switch;
   } else if (node->getNodeType() == AST::String) {
@@ -2458,6 +2456,21 @@ std::string CodeAnalysis::resolveExpressionDataType(ExpressionNode *exprnode,
     ASTNode right = exprnode->getRight();
     auto leftType = resolveNodeOutDataType(left, scopeStack, tree);
     auto rightType = resolveNodeOutDataType(right, scopeStack, tree);
+
+    // A literal without a suffix takes the type of the other operand when
+    // that type holds its value, e.g. UInt8Signal + 1 is a UInt8
+    auto takesType = [&](const ASTNode &operand, const std::string &type) {
+      return (operand->getNodeType() == AST::Int ||
+              operand->getNodeType() == AST::Real) &&
+             DataTypes::untypedLiteralTakes(
+                 *std::static_pointer_cast<ValueNode>(operand), type, tree);
+    };
+    if (takesType(left, rightType)) {
+      return rightType;
+    }
+    if (takesType(right, leftType)) {
+      return leftType;
+    }
 
     // e.g. an expression with a Real becomes Real. Empty for an invalid
     // combination.
