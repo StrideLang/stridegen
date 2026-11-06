@@ -1,0 +1,8 @@
+feature Target {
+  variants: [ LowEnd, HighEnd ]
+  default: LowEnd
+}
+
+signal FifoDepth {
+  default: @with(Target::LowEnd) 16 @with(Target::HighEnd) 128
+}

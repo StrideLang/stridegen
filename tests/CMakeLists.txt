@@ -24,6 +24,7 @@ set(TEST_SOURCES
   codeanalysis_tests.cpp
   codevalidator_tests.cpp
   stridesystem_tests.cpp
+  featureresolver_tests.cpp
 )
 
 

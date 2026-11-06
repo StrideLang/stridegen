@@ -1,0 +1,5 @@
+feature FastClock
+
+signal Buffer {
+  default: @with(FastClock) 1024 * 2 @with(!FastClock) 256 / 2
+}

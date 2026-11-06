@@ -7,6 +7,7 @@ set(STRIDEGEN_SRC
   src/codevalidator.cpp
   src/coderesolver.cpp
   src/codeanalysis.cpp
+  src/featureresolver.cpp
   src/strideframework.cpp
   src/stridesystem.cpp
   src/systemconfiguration.cpp
@@ -20,6 +21,7 @@ set(STRIDEGEN_HEADERS
   include/stride/stridegen/codevalidator.hpp
   include/stride/stridegen/coderesolver.hpp
   include/stride/stridegen/codeanalysis.hpp
+  include/stride/stridegen/featureresolver.hpp
   include/stride/stridegen/strideframework.hpp
   include/stride/stridegen/stridesystem.hpp
   include/stride/stridegen/systemconfiguration.hpp

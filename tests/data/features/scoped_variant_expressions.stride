@@ -1,0 +1,11 @@
+feature Pico {
+  variants: [ RT2030, RT2250 ]
+  default: RT2030
+}
+feature FastClock
+
+@with(Pico::RT2030 || (Pico::RT2250 && FastClock))
+signal BranchA { default: 10 }
+
+@with(!Pico::RT2030 && !FastClock)
+signal BranchB { default: 20 }

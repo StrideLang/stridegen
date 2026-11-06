@@ -1,0 +1,11 @@
+feature HardwareSPI
+feature FastClock
+
+@with(HardwareSPI && !FastClock)
+signal Mode { default: 1 }
+
+@with(HardwareSPI && FastClock)
+signal Mode { default: 2 }
+
+@with(!HardwareSPI)
+signal Mode { default: 3 }

@@ -1,0 +1,7 @@
+feature Pico {
+  variants: [ RT2030, RT2250 ]
+  default: RT2030
+}
+
+@with(Pico::BadVariant)
+signal Broken { default: 0 }

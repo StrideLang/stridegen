@@ -1,0 +1,6 @@
+feature FastClock
+feature HighPrecision
+
+signal SampleRate {
+  default: @with(FastClock) 48000 @with(HighPrecision) 96000
+}

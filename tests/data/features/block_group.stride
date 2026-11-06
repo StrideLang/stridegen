@@ -1,0 +1,8 @@
+feature Audio
+
+@with(Audio) {
+  signal Volume { default: 10 }
+  signal Mute { default: 0 }
+}
+
+signal AlwaysPresent { default: 42 }

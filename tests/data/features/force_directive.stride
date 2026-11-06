@@ -1,0 +1,12 @@
+feature Pico {
+  variants: [ RT2030, RT2250 ]
+  default: RT2030
+}
+
+@force(Pico::RT2250)
+
+@with(Pico::RT2030)
+signal Selected { default: 10 }
+
+@with(Pico::RT2250)
+signal Selected { default: 20 }

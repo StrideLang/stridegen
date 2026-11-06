@@ -1,0 +1,13 @@
+feature FeatureA
+feature FeatureB
+feature FeatureC
+
+@with(FeatureA || FeatureB) {
+  signal AlwaysInGroup { default: 100 }
+
+  @with(FeatureC)
+  signal InnerWithC { default: 200 }
+
+  @with(!FeatureC)
+  signal InnerWithoutC { default: 300 }
+}

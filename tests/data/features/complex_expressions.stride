@@ -1,0 +1,9 @@
+feature FeatureA
+feature FeatureB
+feature FeatureC
+
+@with((FeatureA || FeatureB) && !FeatureC)
+signal Grouped { default: 1 }
+
+@with(FeatureA || (FeatureB && !FeatureC))
+signal Precedence { default: 2 }
