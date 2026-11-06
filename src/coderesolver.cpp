@@ -4377,11 +4377,10 @@ CodeResolver::sliceStreamByDomain(std::shared_ptr<StreamNode> stream,
 
 void CodeResolver::sliceDomainsInNode(std::shared_ptr<DeclarationNode> module,
                                       ScopeStack scopeStack) {
-  if (module->getEntityType() == "module" ||
-      module->getEntityType() == "reaction" ||
-      module->getEntityType() ==
-          "loop") { // TODO how to handle different domains within loops and
-                    // reactions?
+  if (ASTQuery::isCodeGenerator(
+          ASTQuery::findTypeDeclaration(module, scopeStack, m_tree), scopeStack,
+          m_tree)) {
+    // TODO how to handle different domains within loops and reactions?
     ASTNode streamsNode = module->getPropertyValue("streams");
     ASTNode entitiesNode = module->getPropertyValue("entities");
 
