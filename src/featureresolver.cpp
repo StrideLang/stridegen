@@ -143,17 +143,12 @@ void FeatureResolver::processForceDirectives() {
 
         if (cond) {
           if (cond->getNodeType() == AST::Entity) {
-            std::string name = cond->getName();
-            auto scope = std::static_pointer_cast<EntityNode>(cond)->getScope();
-            if (scope && scope->getChildren().size() > 0) {
-              std::string s;
-              for (const auto &sc : scope->getChildren()) {
-                if (sc->getNodeType() == AST::Scope) {
-                  s += std::static_pointer_cast<ScopeNode>(sc)->getName() + "::";
-                }
-              }
-              name = s + name;
+            std::string name = std::static_pointer_cast<EntityNode>(cond)->getName();
+            std::string s;
+            for (const auto &sc : cond->getNamespaceList()) {
+              s += sc + "::";
             }
+            name = s + name;
 
             auto pos = name.find("::");
             if (pos != std::string::npos) {
@@ -188,7 +183,7 @@ void FeatureResolver::processForceDirectives() {
             if (expr->getExpressionType() == ExpressionNode::LogicalNot &&
                 expr->getLeft() &&
                 expr->getLeft()->getNodeType() == AST::Entity) {
-              std::string name = expr->getLeft()->getName();
+              std::string name = std::static_pointer_cast<EntityNode>(expr->getLeft())->getName();
               m_disabledFeatures.insert(name);
               m_activeFeatures.erase(name);
             }
@@ -282,17 +277,12 @@ bool FeatureResolver::evaluateCondition(ASTNode cond,
   }
 
   if (cond->getNodeType() == AST::Entity) {
-    std::string name = cond->getName();
-    auto scope = std::static_pointer_cast<EntityNode>(cond)->getScope();
-    if (scope && scope->getChildren().size() > 0) {
-      std::string s;
-      for (const auto &sc : scope->getChildren()) {
-        if (sc->getNodeType() == AST::Scope) {
-          s += std::static_pointer_cast<ScopeNode>(sc)->getName() + "::";
-        }
-      }
-      name = s + name;
+    std::string name = std::static_pointer_cast<EntityNode>(cond)->getName();
+    std::string s;
+    for (const auto &sc : cond->getNamespaceList()) {
+      s += sc + "::";
     }
+    name = s + name;
 
     auto pos = name.find("::");
     if (pos != std::string::npos) {
