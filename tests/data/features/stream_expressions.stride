@@ -5,10 +5,10 @@ signal In { default: 5 }
 signal Out { default: 0 }
 
 @with(Logging && !Detailed)
-In >> Out
+In >> Out;
 
 @with(Logging && Detailed)
-In * 2 >> Out
+In * 2 >> Out;
 
 @with(!Logging)
-In * 10 >> Out
+In * 10 >> Out;
