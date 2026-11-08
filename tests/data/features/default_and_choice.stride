@@ -1,0 +1,14 @@
+feature Pico {
+  variants: [ RT2030, RT2250 ]
+  default: RT2030
+}
+
+@with(Pico::RT2030)
+signal BufferSize {
+  default: 256
+}
+
+@with(Pico::RT2250)
+signal BufferSize {
+  default: 1024
+}

@@ -1,0 +1,11 @@
+feature ExtraInput
+
+module Processor {
+  inputs: [
+    In1,
+    @with(ExtraInput) In2
+  ]
+  outputs: [
+    Out
+  ]
+}

@@ -1,0 +1,2 @@
+@with(NonExistentFeature)
+signal Broken { default: 0 }
