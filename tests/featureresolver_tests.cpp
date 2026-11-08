@@ -53,7 +53,7 @@ TEST(FeatureResolverTest, DefaultVariantSelected) {
         auto defProp = decl->getPropertyValue("default");
         ASSERT_TRUE(defProp != nullptr);
         ASSERT_EQ(defProp->getNodeType(), AST::Value);
-        EXPECT_EQ(std::static_pointer_cast<ValueNode>(defProp)->getValue(), 256.0);
+        EXPECT_EQ(std::static_pointer_cast<ValueNode>(defProp)->toReal(), 256.0);
       }
     }
   }
@@ -85,7 +85,7 @@ TEST(FeatureResolverTest, ExplicitChoiceSelection) {
         auto defProp = decl->getPropertyValue("default");
         ASSERT_TRUE(defProp != nullptr);
         ASSERT_EQ(defProp->getNodeType(), AST::Value);
-        EXPECT_EQ(std::static_pointer_cast<ValueNode>(defProp)->getValue(), 1024.0);
+        EXPECT_EQ(std::static_pointer_cast<ValueNode>(defProp)->toReal(), 1024.0);
       }
     }
   }
@@ -134,7 +134,7 @@ TEST(FeatureResolverTest, BooleanLogicEvaluation) {
         if (decl->getName() == "Mode") {
           modeCount++;
           auto val = std::static_pointer_cast<ValueNode>(decl->getPropertyValue("default"));
-          EXPECT_EQ(val->getValue(), 1.0); // Mode 1
+          EXPECT_EQ(val->toReal(), 1.0); // Mode 1
         }
       }
     }
@@ -160,7 +160,7 @@ TEST(FeatureResolverTest, BooleanLogicEvaluation) {
         if (decl->getName() == "Mode") {
           modeCount++;
           auto val = std::static_pointer_cast<ValueNode>(decl->getPropertyValue("default"));
-          EXPECT_EQ(val->getValue(), 2.0); // Mode 2
+          EXPECT_EQ(val->toReal(), 2.0); // Mode 2
         }
       }
     }
@@ -184,7 +184,7 @@ TEST(FeatureResolverTest, BooleanLogicEvaluation) {
         if (decl->getName() == "Mode") {
           modeCount++;
           auto val = std::static_pointer_cast<ValueNode>(decl->getPropertyValue("default"));
-          EXPECT_EQ(val->getValue(), 3.0); // Mode 3
+          EXPECT_EQ(val->toReal(), 3.0); // Mode 3
         }
       }
     }
@@ -282,7 +282,7 @@ TEST(FeatureResolverTest, InlineConditionalPropertyResolution) {
 
     auto sig = std::static_pointer_cast<DeclarationNode>(tree->getChildren().at(0));
     auto defVal = std::static_pointer_cast<ValueNode>(sig->getPropertyValue("default"));
-    EXPECT_EQ(defVal->getValue(), 16.0);
+    EXPECT_EQ(defVal->toReal(), 16.0);
   }
 
   // Target HighEnd -> FifoDepth default is 128
@@ -300,7 +300,7 @@ TEST(FeatureResolverTest, InlineConditionalPropertyResolution) {
 
     auto sig = std::static_pointer_cast<DeclarationNode>(tree->getChildren().at(0));
     auto defVal = std::static_pointer_cast<ValueNode>(sig->getPropertyValue("default"));
-    EXPECT_EQ(defVal->getValue(), 128.0);
+    EXPECT_EQ(defVal->toReal(), 128.0);
   }
 }
 
@@ -372,7 +372,7 @@ TEST(FeatureResolverTest, FileLocalForceDirective) {
         if (decl->getName() == "Selected") {
           signalCount++;
           auto val = std::static_pointer_cast<ValueNode>(decl->getPropertyValue("default"));
-          EXPECT_EQ(val->getValue(), 20.0);
+          EXPECT_EQ(val->toReal(), 20.0);
         }
       }
     }
@@ -400,7 +400,7 @@ TEST(FeatureResolverTest, FileLocalForceDirective) {
         if (decl->getName() == "Selected") {
           signalCount++;
           auto val = std::static_pointer_cast<ValueNode>(decl->getPropertyValue("default"));
-          EXPECT_EQ(val->getValue(), 10.0);
+          EXPECT_EQ(val->toReal(), 10.0);
         }
       }
     }
