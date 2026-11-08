@@ -52,7 +52,7 @@ TEST(FeatureResolverTest, DefaultVariantSelected) {
         signalCount++;
         auto defProp = decl->getPropertyValue("default");
         ASSERT_TRUE(defProp != nullptr);
-        ASSERT_EQ(defProp->getNodeType(), AST::Value);
+        ASSERT_TRUE(defProp->getNodeType() == AST::Int || defProp->getNodeType() == AST::Real);
         EXPECT_EQ(std::static_pointer_cast<ValueNode>(defProp)->toReal(), 256.0);
       }
     }
@@ -84,7 +84,7 @@ TEST(FeatureResolverTest, ExplicitChoiceSelection) {
         signalCount++;
         auto defProp = decl->getPropertyValue("default");
         ASSERT_TRUE(defProp != nullptr);
-        ASSERT_EQ(defProp->getNodeType(), AST::Value);
+        ASSERT_TRUE(defProp->getNodeType() == AST::Int || defProp->getNodeType() == AST::Real);
         EXPECT_EQ(std::static_pointer_cast<ValueNode>(defProp)->toReal(), 1024.0);
       }
     }
