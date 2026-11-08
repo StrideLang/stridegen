@@ -69,6 +69,20 @@ bool FeatureResolver::process() {
 
 void FeatureResolver::harvestDeclarations() {
   m_declaredFeatures.clear();
+  bool hasFeatureDecl = false;
+  for (const auto &child : m_tree->getChildren()) {
+    if (child && child->getNodeType() == AST::Declaration) {
+      auto decl = std::static_pointer_cast<DeclarationNode>(child);
+      if (decl->getEntityType() == "feature") {
+        hasFeatureDecl = true;
+        break;
+      }
+    }
+  }
+  if (!hasFeatureDecl) {
+    return;
+  }
+
   std::vector<ASTNode> remainingChildren;
 
   for (const auto &child : m_tree->getChildren()) {
@@ -125,6 +139,20 @@ void FeatureResolver::processForceDirectives() {
   m_disabledFeatures = m_initialConfig.disabledFeatures;
   m_exclusiveChoices = m_initialConfig.exclusiveChoices;
   m_useDefaultFeatures = m_initialConfig.useDefaultFeatures;
+
+  bool hasForceDirective = false;
+  for (const auto &child : m_tree->getChildren()) {
+    if (child && child->getNodeType() == AST::Declaration) {
+      auto decl = std::static_pointer_cast<DeclarationNode>(child);
+      if (decl->getEntityType() == "_force") {
+        hasForceDirective = true;
+        break;
+      }
+    }
+  }
+  if (!hasForceDirective) {
+    return;
+  }
 
   std::vector<ASTNode> remainingChildren;
 
@@ -339,21 +367,31 @@ void FeatureResolver::pruneAST(ASTNode node) {
     return;
 
   // 1. Prune child nodes based on _feature_condition
-  std::vector<ASTNode> survivingChildren;
+  bool hasGuardedChildren = false;
   for (const auto &child : node->getChildren()) {
-    if (!child)
-      continue;
-    auto cond = child->getCompilerProperty("_feature_condition");
-    if (cond) {
-      bool active = evaluateCondition(cond, child->getFilename(), child->getLine());
-      if (!active) {
-        continue; // Pruned!
-      }
-      child->removeCompilerProperty("_feature_condition");
+    if (child && child->getCompilerProperty("_feature_condition")) {
+      hasGuardedChildren = true;
+      break;
     }
-    survivingChildren.push_back(child);
   }
-  node->setChildren(survivingChildren);
+
+  if (hasGuardedChildren) {
+    std::vector<ASTNode> survivingChildren;
+    for (const auto &child : node->getChildren()) {
+      if (child) {
+        auto cond = child->getCompilerProperty("_feature_condition");
+        if (cond) {
+          bool active = evaluateCondition(cond, child->getFilename(), child->getLine());
+          if (!active) {
+            continue; // Pruned!
+          }
+          child->removeCompilerProperty("_feature_condition");
+        }
+      }
+      survivingChildren.push_back(child);
+    }
+    node->setChildren(survivingChildren);
+  }
 
   // 2. Resolve inline conditional properties
   pruneConditionalProperties(node);
@@ -363,7 +401,9 @@ void FeatureResolver::pruneAST(ASTNode node) {
 
   // 4. Recurse into children
   for (const auto &child : node->getChildren()) {
-    pruneAST(child);
+    if (child) {
+      pruneAST(child);
+    }
   }
 }
 
@@ -416,21 +456,30 @@ void FeatureResolver::prunePortLists(ASTNode node) {
         auto val = prop->getValue();
         if (val && val->getNodeType() == AST::List) {
           auto list = std::static_pointer_cast<ListNode>(val);
-          std::vector<ASTNode> survivingPorts;
+          bool hasGuardedPort = false;
           for (const auto &port : list->getChildren()) {
-            if (!port)
-              continue;
-            auto cond = port->getCompilerProperty("_feature_condition");
-            if (cond) {
-              bool active = evaluateCondition(cond, port->getFilename(), port->getLine());
-              if (!active) {
-                continue;
-              }
-              port->removeCompilerProperty("_feature_condition");
+            if (port && port->getCompilerProperty("_feature_condition")) {
+              hasGuardedPort = true;
+              break;
             }
-            survivingPorts.push_back(port);
           }
-          list->setChildren(survivingPorts);
+          if (hasGuardedPort) {
+            std::vector<ASTNode> survivingPorts;
+            for (const auto &port : list->getChildren()) {
+              if (port) {
+                auto cond = port->getCompilerProperty("_feature_condition");
+                if (cond) {
+                  bool active = evaluateCondition(cond, port->getFilename(), port->getLine());
+                  if (!active) {
+                    continue;
+                  }
+                  port->removeCompilerProperty("_feature_condition");
+                }
+              }
+              survivingPorts.push_back(port);
+            }
+            list->setChildren(survivingPorts);
+          }
         }
       }
     }
