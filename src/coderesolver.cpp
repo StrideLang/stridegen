@@ -45,11 +45,19 @@
 using namespace strd;
 
 CodeResolver::CodeResolver(ASTNode tree, std::string striderootDir,
-                           SystemConfiguration systemConfig)
+                           SystemConfiguration systemConfig,
+                           FeatureConfig featureConfig)
     : m_systemConfig(systemConfig), m_tree(tree),
-      m_striderootDir(striderootDir) {
-  std::vector<std::shared_ptr<ImportNode>> importList =
+      m_striderootDir(striderootDir), m_featureConfig(featureConfig) {
+  std::vector<std::shared_ptr<ImportNode>> allImports =
       ASTQuery::getImportNodes(tree);
+  std::vector<std::shared_ptr<ImportNode>> importList;
+  for (const auto &imp : allImports) {
+    auto cond = imp->getCompilerProperty("_feature_condition");
+    if (!cond || FeatureResolver::isConditionMet(cond, m_featureConfig)) {
+      importList.push_back(imp);
+    }
+  }
   std::vector<std::shared_ptr<SystemNode>> systems =
       ASTQuery::getSystemNodes(tree);
 
@@ -57,7 +65,8 @@ CodeResolver::CodeResolver(ASTNode tree, std::string striderootDir,
     std::shared_ptr<SystemNode> platformNode = systems.at(0);
     m_system = std::make_shared<StrideSystem>(
         striderootDir, platformNode->platformName(),
-        platformNode->majorVersion(), platformNode->minorVersion(), importList);
+        platformNode->majorVersion(), platformNode->minorVersion(),
+        importList, m_featureConfig);
     m_system->m_systemConfig = systemConfig;
 
     std::string targetDev;
@@ -78,7 +87,7 @@ CodeResolver::CodeResolver(ASTNode tree, std::string striderootDir,
     }
   } else { // Make a default platform that only inlcudes the common library
     m_system =
-        std::make_shared<StrideSystem>(striderootDir, "", -1, -1, importList);
+        std::make_shared<StrideSystem>(striderootDir, "", -1, -1, importList, m_featureConfig);
     // TODO is it Ok to assume JIT for all missing cases? It seems very
     // practical.
     m_policyManager.loadPlatform(striderootDir, "JIT", "");
@@ -363,6 +372,10 @@ void CodeResolver::processSystem() {
     if (node->getNodeType() == AST::Import) {
       std::shared_ptr<ImportNode> import =
           std::static_pointer_cast<ImportNode>(node);
+      auto cond = import->getCompilerProperty("_feature_condition");
+      if (cond && !FeatureResolver::isConditionMet(cond, m_featureConfig)) {
+        continue;
+      }
       // TODO add namespace support here (e.g. import
       // Platform::Filters::Filter)
       bool imported = false;

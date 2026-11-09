@@ -42,13 +42,15 @@
 
 #include "systemconfiguration.hpp"
 #include "platformpolicymanager.hpp"
+#include "featureresolver.hpp"
 
 namespace strd {
 // Resolves all code and creates a StrideSystem
 class CodeResolver {
 public:
   CodeResolver(ASTNode tree, std::string striderootDir,
-               SystemConfiguration systemConfig = SystemConfiguration());
+               SystemConfiguration systemConfig = SystemConfiguration(),
+               FeatureConfig featureConfig = FeatureConfig());
   ~CodeResolver();
 
   void process();
@@ -56,6 +58,8 @@ public:
   std::shared_ptr<StrideSystem> getSystem() { return m_system; }
   const PlatformPolicyManager &getPolicyManager() const { return m_policyManager; }
   PlatformPolicyManager &getPolicyManager() { return m_policyManager; }
+  const FeatureConfig &getFeatureConfig() const { return m_featureConfig; }
+  void setFeatureConfig(const FeatureConfig &config) { m_featureConfig = config; }
 
 private:
   // Main processing functions
@@ -243,6 +247,7 @@ private:
 
   // Resolver configuration
   bool m_declareUnknownSymbols = false;
+  FeatureConfig m_featureConfig;
 };
 } // namespace strd
 

@@ -29,7 +29,23 @@ When resolving variable or signal identifiers, the compiler checks scopes in the
   import Filters as Flt
   ```
 
-### 2.2 Include Path Search Order
+### 2.2 Conditional Imports with `@with`
+Import statements can be conditionally included based on feature toggles using `@with(...)`, either as single statements or grouped in blocks:
+```stride
+@with(Audio)
+import Filters
+
+@with(!Audio)
+import DummyAudio
+
+@with(Audio && Advanced) {
+  import Filters::Biquad
+  import Generators as Gen
+}
+```
+When a feature condition evaluates to `false`, guarded import statements are pruned by `FeatureResolver` during preprocessing, preventing inactive dependencies from being loaded or resolved.
+
+### 2.3 Include Path Search Order
 When an import statement is resolved, the compiler searches include roots in the following priority order:
 1. **Current Directory**: Sibling files in the directory of the compiling file.
 2. **Project Include Directories**: Configured project source directories and `-I` include roots.

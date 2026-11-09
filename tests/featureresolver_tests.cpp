@@ -23,6 +23,9 @@
 #include "gtest/gtest.h"
 
 #include "stride/stridegen/featureresolver.hpp"
+#include "stride/stridegen/coderesolver.hpp"
+#include "stride/utils/astfunctions.h"
+#include "stride/parser/importnode.h"
 #include "stride/parser/declarationnode.h"
 #include "stride/parser/expressionnode.h"
 #include "stride/parser/listnode.h"
@@ -687,3 +690,122 @@ TEST(FeatureResolverTest, ConditionalPropertyWithExpressionValues) {
     EXPECT_EQ(expr->getExpressionType(), ExpressionNode::Divide);
   }
 }
+
+TEST(FeatureResolverTest, ConditionalImports) {
+  // Case 1: Audio disabled -> only DummyAudio survives
+  {
+    ASTNode tree = AST::parseFile(TESTS_SOURCE_DIR "features/conditional_imports.stride");
+    ASSERT_TRUE(tree != nullptr);
+    FeatureConfig config;
+    FeatureResolver resolver(tree, config);
+    ASSERT_TRUE(resolver.process());
+
+    auto imports = ASTQuery::getImportNodes(tree);
+    ASSERT_EQ(imports.size(), 1u);
+    EXPECT_EQ(imports[0]->importName(), "DummyAudio");
+    EXPECT_EQ(imports[0]->importAlias(), "");
+    EXPECT_FALSE(imports[0]->getCompilerProperty("_feature_condition"));
+  }
+
+  // Case 2: Audio enabled, Network disabled -> only AudioEffects survives
+  {
+    ASTNode tree = AST::parseFile(TESTS_SOURCE_DIR "features/conditional_imports.stride");
+    ASSERT_TRUE(tree != nullptr);
+    FeatureConfig config;
+    config.enabledFeatures.insert("Audio");
+    FeatureResolver resolver(tree, config);
+    ASSERT_TRUE(resolver.process());
+
+    auto imports = ASTQuery::getImportNodes(tree);
+    ASSERT_EQ(imports.size(), 1u);
+    EXPECT_EQ(imports[0]->importName(), "AudioEffects");
+    EXPECT_EQ(imports[0]->importAlias(), "");
+    EXPECT_FALSE(imports[0]->getCompilerProperty("_feature_condition"));
+  }
+
+  // Case 3: Audio and Network enabled -> AudioEffects and RemoteAudio survive
+  {
+    ASTNode tree = AST::parseFile(TESTS_SOURCE_DIR "features/conditional_imports.stride");
+    ASSERT_TRUE(tree != nullptr);
+    FeatureConfig config;
+    config.enabledFeatures.insert("Audio");
+    config.enabledFeatures.insert("Network");
+    FeatureResolver resolver(tree, config);
+    ASSERT_TRUE(resolver.process());
+
+    auto imports = ASTQuery::getImportNodes(tree);
+    ASSERT_EQ(imports.size(), 2u);
+    EXPECT_EQ(imports[0]->importName(), "AudioEffects");
+    EXPECT_EQ(imports[0]->importAlias(), "");
+    EXPECT_FALSE(imports[0]->getCompilerProperty("_feature_condition"));
+
+    EXPECT_EQ(imports[1]->importName(), "RemoteAudio");
+    EXPECT_EQ(imports[1]->importAlias(), "RA");
+    EXPECT_FALSE(imports[1]->getCompilerProperty("_feature_condition"));
+  }
+}
+
+TEST(FeatureResolverTest, IsConditionMetPredicate) {
+  FeatureConfig config;
+  config.enabledFeatures.insert("Audio");
+  config.disabledFeatures.insert("Debug");
+  config.exclusiveChoices["Target"] = "RP2350";
+
+  auto audioNode = std::make_shared<EntityNode>("Audio", nullptr, "test", 1);
+  auto debugNode = std::make_shared<EntityNode>("Debug", nullptr, "test", 1);
+  auto absentNode = std::make_shared<EntityNode>("Network", nullptr, "test", 1);
+
+  EXPECT_TRUE(FeatureResolver::isConditionMet(audioNode, config));
+  EXPECT_FALSE(FeatureResolver::isConditionMet(debugNode, config));
+  EXPECT_FALSE(FeatureResolver::isConditionMet(absentNode, config));
+
+  // Negation
+  auto notAudio = std::make_shared<ExpressionNode>(
+      ExpressionNode::LogicalNot, audioNode, nullptr, "test", 1);
+  auto notDebug = std::make_shared<ExpressionNode>(
+      ExpressionNode::LogicalNot, debugNode, nullptr, "test", 1);
+  EXPECT_FALSE(FeatureResolver::isConditionMet(notAudio, config));
+  EXPECT_TRUE(FeatureResolver::isConditionMet(notDebug, config));
+
+  // Exclusive group::variant
+  auto rp2350Node = std::make_shared<EntityNode>("RP2350", nullptr, "test", 1);
+  rp2350Node->addScope("Target");
+  auto rp2040Node = std::make_shared<EntityNode>("RP2040", nullptr, "test", 1);
+  rp2040Node->addScope("Target");
+  EXPECT_TRUE(FeatureResolver::isConditionMet(rp2350Node, config));
+  EXPECT_FALSE(FeatureResolver::isConditionMet(rp2040Node, config));
+}
+
+TEST(FeatureResolverTest, InjectionTimeImportFiltering) {
+  // Parse without running FeatureResolver first so ImportNodes keep _feature_condition
+  ASTNode tree = AST::parseFile(TESTS_SOURCE_DIR "features/conditional_imports.stride");
+  ASSERT_TRUE(tree != nullptr);
+
+  FeatureConfig config;
+  config.enabledFeatures.insert("Audio");
+  // Network is absent (inactive)
+
+  std::string strideroot = ASTFunctions::getDefaultStrideRoot();
+  CodeResolver resolver(tree, strideroot, SystemConfiguration(), config);
+
+  // CodeResolver constructor filters importList passed to StrideSystem
+  auto system = resolver.getSystem();
+  ASSERT_TRUE(system != nullptr);
+
+  // AudioEffects should be admitted, DummyAudio and RemoteAudio filtered
+  auto imports = ASTQuery::getImportNodes(tree);
+  // Unpruned tree has all 3 imports in AST
+  ASSERT_EQ(imports.size(), 3u);
+
+  // But when filtered with isConditionMet:
+  std::vector<std::shared_ptr<ImportNode>> activeImports;
+  for (const auto &imp : imports) {
+    auto cond = imp->getCompilerProperty("_feature_condition");
+    if (!cond || FeatureResolver::isConditionMet(cond, config)) {
+      activeImports.push_back(imp);
+    }
+  }
+  ASSERT_EQ(activeImports.size(), 1u);
+  EXPECT_EQ(activeImports[0]->importName(), "AudioEffects");
+}
+

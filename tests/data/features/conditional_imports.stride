@@ -1,0 +1,12 @@
+feature Audio
+feature Network
+
+@with(Audio)
+import AudioEffects
+
+@with(!Audio)
+import DummyAudio
+
+@with(Audio && Network) {
+  import RemoteAudio as RA
+}

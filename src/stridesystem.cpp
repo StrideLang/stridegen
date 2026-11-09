@@ -50,9 +50,11 @@ using namespace strd;
 
 StrideSystem::StrideSystem(std::string strideRoot, std::string systemName,
                            int majorVersion, int minorVersion,
-                           std::vector<std::shared_ptr<ImportNode>> importList)
+                           std::vector<std::shared_ptr<ImportNode>> importList,
+                           FeatureConfig featureConfig)
     : m_strideRoot(strideRoot), m_systemName(systemName),
-      m_majorVersion(majorVersion), m_minorVersion(minorVersion) {
+      m_majorVersion(majorVersion), m_minorVersion(minorVersion),
+      m_featureConfig(featureConfig) {
 
   if (systemName.size() == 0) {
     std::cerr << __FILE__ << ":" << __LINE__ << " WARNING: No System specified"
@@ -831,6 +833,23 @@ std::vector<ASTNode> StrideSystem::loadImportTree(std::string importName,
                            fwnodes.end());
     }
   }
+
+  // Filter importedNodes based on feature configuration at injection time
+  std::vector<ASTNode> filteredNodes;
+  for (const auto &node : importedNodes) {
+    if (!node) continue;
+    auto cond = node->getCompilerProperty("_feature_condition");
+    if (cond) {
+      if (FeatureResolver::isConditionMet(cond, m_featureConfig)) {
+        node->removeCompilerProperty("_feature_condition");
+        filteredNodes.push_back(node);
+      }
+    } else {
+      filteredNodes.push_back(node);
+    }
+  }
+  importedNodes = filteredNodes;
+
   if (m_systemNodes.find(importAs) == m_systemNodes.end()) {
     m_systemNodes[importAs] = importedNodes;
   } else {

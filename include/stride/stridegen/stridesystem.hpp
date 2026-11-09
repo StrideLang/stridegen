@@ -30,6 +30,7 @@
 #include "stride/stridegen/builder.hpp"
 #include "stride/stridegen/strideframework.hpp"
 #include "stride/stridegen/systemconfiguration.hpp"
+#include "stride/stridegen/featureresolver.hpp"
 #include "stride/utils/stridelibrary.h"
 
 namespace strd {
@@ -43,7 +44,8 @@ typedef struct {
 class StrideSystem {
 public:
   StrideSystem(std::string strideRoot, std::string systemName, int majorVersion,
-               int minorVersion, std::vector<std::shared_ptr<ImportNode>>);
+               int minorVersion, std::vector<std::shared_ptr<ImportNode>> importList,
+               FeatureConfig featureConfig = FeatureConfig());
   ~StrideSystem();
 
   static std::vector<std::string> listAvailableSystems(std::string strideroot);
@@ -132,6 +134,9 @@ public:
 
   const std::string &systemName() const;
 
+  const FeatureConfig &getFeatureConfig() const { return m_featureConfig; }
+  void setFeatureConfig(const FeatureConfig &config) { m_featureConfig = config; }
+
 private:
   std::shared_ptr<DeclarationNode>
   findDataTypeInPath(std::string path, std::string strideDataType);
@@ -158,6 +163,7 @@ private:
   std::map<std::string, std::vector<ASTNode>> m_systemNodes;
 
   StrideLibrary m_library;
+  FeatureConfig m_featureConfig;
 };
 } // namespace strd
 

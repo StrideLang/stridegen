@@ -49,6 +49,8 @@ public:
 
   bool process();
 
+  static bool isConditionMet(ASTNode cond, const FeatureConfig &config);
+
   const std::vector<LangError> &getErrors() const { return m_errors; }
   const std::set<std::string> &getActiveFeatures() const {
     return m_activeFeatures;

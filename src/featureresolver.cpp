@@ -297,6 +297,61 @@ bool FeatureResolver::isFeatureActive(const std::string &name) const {
   }
 }
 
+bool FeatureResolver::isConditionMet(ASTNode cond,
+                                      const FeatureConfig &config) {
+  if (!cond) {
+    return true;
+  }
+
+  if (cond->getNodeType() == AST::Entity) {
+    std::string name = std::static_pointer_cast<EntityNode>(cond)->getName();
+    std::string s;
+    for (const auto &sc : cond->getNamespaceList()) {
+      s += sc + "::";
+    }
+    name = s + name;
+
+    if (config.disabledFeatures.count(name)) {
+      return false;
+    }
+    if (config.enabledFeatures.count(name)) {
+      return true;
+    }
+
+    auto pos = name.find("::");
+    if (pos != std::string::npos) {
+      std::string group = name.substr(0, pos);
+      std::string variant = name.substr(pos + 2);
+      if (config.disabledFeatures.count(group)) {
+        return false;
+      }
+      auto it = config.exclusiveChoices.find(group);
+      if (it != config.exclusiveChoices.end()) {
+        return it->second == variant;
+      }
+    }
+    return false;
+  }
+
+  if (cond->getNodeType() == AST::Expression) {
+    auto expr = std::static_pointer_cast<ExpressionNode>(cond);
+    switch (expr->getExpressionType()) {
+    case ExpressionNode::LogicalNot:
+      return !isConditionMet(expr->getLeft(), config);
+    case ExpressionNode::And:
+      return isConditionMet(expr->getLeft(), config) &&
+             isConditionMet(expr->getRight(), config);
+    case ExpressionNode::Or:
+      return isConditionMet(expr->getLeft(), config) ||
+             isConditionMet(expr->getRight(), config);
+    default:
+      return false;
+    }
+  }
+
+  return false;
+}
+
 bool FeatureResolver::evaluateCondition(ASTNode cond,
                                         const std::string &currentFile,
                                         int line) {
