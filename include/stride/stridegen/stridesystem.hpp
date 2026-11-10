@@ -85,7 +85,16 @@ public:
   void injectResourceConfiguration(ASTNode tree);
 
   ConnectionNodes getDomainChangeStreams(std::string previousDomainId,
-                                         std::string nextDomainId);
+                                         std::string nextDomainId,
+                                         ASTNode tree = nullptr);
+
+  static ASTNode substitutePropertiesInAST(
+      ASTNode node, const std::map<std::string, ASTNode> &props);
+
+  const std::vector<std::shared_ptr<DeclarationNode>> &
+  getConnectionDefinitions() const {
+    return m_connectionDefinitions;
+  }
 
   std::string getCommonAncestorDomain(std::string domainId1,
                                       std::string domainId2, ASTNode tree);

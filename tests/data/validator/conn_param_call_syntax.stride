@@ -1,0 +1,29 @@
+connection TestSerialConn {
+    port: 0
+    baudRate: 115200
+    sourceDomains: ["DomainA"]
+    destinationDomains: ["DomainB"]
+    sourceStreams: [
+        _Connection_Token >> SerialOut[.port];
+    ]
+    destinationStreams: [
+        SerialIn[.port] >> _Connection_Token;
+    ]
+}
+
+_domainDefinition DomainA {
+}
+
+_domainDefinition DomainB {
+}
+
+signal SigA { domain: DomainA }
+signal SigB { domain: DomainB }
+
+system TestSys {
+    connections: [
+        TestSerialConn(port: 3)
+    ]
+}
+
+SigA >> SigB;

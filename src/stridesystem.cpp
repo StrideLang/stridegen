@@ -43,6 +43,7 @@
 #include "stride/utils/astquery.h"
 
 #include "stride/parser/declarationnode.h"
+#include "stride/parser/memberaccessnode.h"
 #include "stride/parser/propertynode.h"
 // #include "pythonproject.h"
 
@@ -1039,7 +1040,7 @@ void StrideSystem::generateDomainConnections(ASTNode tree) {
           std::cerr << "Domain change: " << previousDomainId << " -> "
                     << nextDomainId << std::endl;
           auto domainChangeNodes =
-              getDomainChangeStreams(previousDomainId, nextDomainId);
+              getDomainChangeStreams(previousDomainId, nextDomainId, tree);
 
           //
           auto nextInstance = CodeAnalysis::getInstance(next, {}, tree);
@@ -1097,21 +1098,27 @@ void StrideSystem::generateDomainConnections(ASTNode tree) {
 
             auto connectionDomain =
                 CodeAnalysis::getNodeDomain(connectionNode, {}, tree);
-            nextInstance->appendToPropertyValue("writes", connectionDomain);
+            if (nextInstance && connectionDomain) {
+              nextInstance->appendToPropertyValue("writes", connectionDomain);
+            }
 
             std::shared_ptr<StreamNode> newStream =
                 std::make_shared<StreamNode>(connectionNode, next, __FILE__,
                                              __LINE__);
             newStreams.push_back(newStream);
-            auto srcImportNodes =
-                domainChangeNodes.sourceImports->getChildren();
-            newChildren.insert(newChildren.end(), srcImportNodes.begin(),
-                               srcImportNodes.end());
+            if (domainChangeNodes.sourceImports) {
+              auto srcImportNodes =
+                  domainChangeNodes.sourceImports->getChildren();
+              newChildren.insert(newChildren.end(), srcImportNodes.begin(),
+                                 srcImportNodes.end());
+            }
             // FIXME a lot of redundant nodes are inserted here. Only insert if
             // not present
-            auto destImportNodes = domainChangeNodes.destImports->getChildren();
-            newChildren.insert(newChildren.end(), destImportNodes.begin(),
-                               destImportNodes.end());
+            if (domainChangeNodes.destImports) {
+              auto destImportNodes = domainChangeNodes.destImports->getChildren();
+              newChildren.insert(newChildren.end(), destImportNodes.begin(),
+                                 destImportNodes.end());
+            }
           } else {
           }
         }
@@ -1191,12 +1198,142 @@ void StrideSystem::injectResourceConfiguration(ASTNode tree) {
   tree->setChildren(newChildren);
 }
 
+ASTNode StrideSystem::substitutePropertiesInAST(
+    ASTNode node, const std::map<std::string, ASTNode> &props) {
+  if (!node || props.empty()) {
+    return node;
+  }
+  if (node->getNodeType() == AST::Entity) {
+    auto entity = std::static_pointer_cast<EntityNode>(node);
+    auto it = props.find(entity->getName());
+    if (it != props.end() && it->second) {
+      ASTNode replacement = it->second->deepCopy();
+      node->copyLocationTo(replacement);
+      return replacement;
+    }
+    return node;
+  }
+  if (node->getNodeType() == AST::MemberAccess) {
+    auto member = std::static_pointer_cast<MemberAccessNode>(node);
+    if (member->getEntity().empty()) {
+      auto it = props.find(member->getPropertyName());
+      if (it != props.end() && it->second) {
+        ASTNode replacement = it->second->deepCopy();
+        node->copyLocationTo(replacement);
+        return replacement;
+      }
+    } else {
+      auto fullName = member->getEntity() + "." + member->getPropertyName();
+      auto it = props.find(fullName);
+      if (it != props.end() && it->second) {
+        ASTNode replacement = it->second->deepCopy();
+        node->copyLocationTo(replacement);
+        return replacement;
+      }
+      auto itProp = props.find(member->getPropertyName());
+      if (itProp != props.end() && itProp->second) {
+        ASTNode replacement = itProp->second->deepCopy();
+        node->copyLocationTo(replacement);
+        return replacement;
+      }
+    }
+    return node;
+  }
+  if (node->getNodeType() == AST::Stream) {
+    auto stream = std::static_pointer_cast<StreamNode>(node);
+    auto left = substitutePropertiesInAST(stream->getLeft(), props);
+    auto right = substitutePropertiesInAST(stream->getRight(), props);
+    stream->setLeft(left);
+    stream->setRight(right);
+    return stream;
+  }
+
+  std::vector<ASTNode> newChildren;
+  bool changed = false;
+  for (const auto &child : node->getChildren()) {
+    auto newChild = substitutePropertiesInAST(child, props);
+    if (newChild != child) {
+      changed = true;
+    }
+    newChildren.push_back(newChild);
+  }
+  if (changed) {
+    node->setChildren(newChildren);
+  }
+  return node;
+}
+
 ConnectionNodes
 StrideSystem::getDomainChangeStreams(std::string previousDomainId,
-                                     std::string nextDomainId) {
+                                     std::string nextDomainId,
+                                     ASTNode tree) {
   ConnectionNodes domainChangeNodes;
 
-  for (auto connector : m_connectionDefinitions) {
+  std::vector<std::shared_ptr<DeclarationNode>> allConnectors =
+      m_connectionDefinitions;
+  std::map<std::string, std::map<std::string, ASTNode>> connectionOverrides;
+
+  static const std::set<std::string> reservedProps = {
+      "sourceFramework",   "destinationFramework", "sourceDomains",
+      "destinationDomains", "sourceStreams",        "destinationStreams",
+      "sourceImports",     "destinationImports",   "meta",
+      "label"};
+
+  if (tree) {
+    for (const auto &node : tree->getChildren()) {
+      if (node->getNodeType() == AST::Declaration) {
+        auto decl = std::static_pointer_cast<DeclarationNode>(node);
+        if (decl->getEntityType() == "connection") {
+          bool isBlueprint = decl->getPropertyValue("sourceStreams") ||
+                             decl->getPropertyValue("destinationStreams") ||
+                             decl->getPropertyValue("sourceDomains") ||
+                             decl->getPropertyValue("sourceFramework");
+          bool alreadyExists = false;
+          for (const auto &c : allConnectors) {
+            if (c->getName() == decl->getName()) {
+              alreadyExists = true;
+              break;
+            }
+          }
+          if (isBlueprint && !alreadyExists) {
+            allConnectors.push_back(decl);
+          } else {
+            for (const auto &prop : decl->getProperties()) {
+              if (!reservedProps.count(prop->getName())) {
+                connectionOverrides[decl->getName()][prop->getName()] =
+                    prop->getValue();
+              }
+            }
+          }
+        } else if (decl->getEntityType() == "system") {
+          auto conns = decl->getPropertyValue("connections");
+          if (conns && conns->getNodeType() == AST::List) {
+            for (const auto &item : conns->getChildren()) {
+              if (item->getNodeType() == AST::Declaration) {
+                auto itemDecl = std::static_pointer_cast<DeclarationNode>(item);
+                for (const auto &prop : itemDecl->getProperties()) {
+                  if (!reservedProps.count(prop->getName())) {
+                    connectionOverrides[itemDecl->getName()][prop->getName()] =
+                        prop->getValue();
+                  }
+                }
+              } else if (item->getNodeType() == AST::Function) {
+                auto itemFunc = std::static_pointer_cast<FunctionNode>(item);
+                for (const auto &prop : itemFunc->getProperties()) {
+                  if (!reservedProps.count(prop->getName())) {
+                    connectionOverrides[itemFunc->getName()][prop->getName()] =
+                        prop->getValue();
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  for (auto connector : allConnectors) {
     auto sourceDomainsList = connector->getPropertyValue("sourceDomains");
     auto destDomainsList = connector->getPropertyValue("destinationDomains");
     auto sourceFramework = connector->getPropertyValue("sourceFramework");
@@ -1206,48 +1343,97 @@ StrideSystem::getDomainChangeStreams(std::string previousDomainId,
     if (separatorIndex != std::string::npos) {
       previousDomainFramework = previousDomainId.substr(0, separatorIndex);
       previousDomainId = previousDomainId.substr(separatorIndex + 2);
+    } else if (tree) {
+      previousDomainFramework =
+          CodeAnalysis::getFrameworkForDomain(previousDomainId, tree);
     }
-    // TODO implement for domain instances (with an additional ":" separator at
-    // the end
     std::string nextDomainFramework;
     separatorIndex = nextDomainId.find("::");
     if (separatorIndex != std::string::npos) {
       nextDomainFramework = nextDomainId.substr(0, separatorIndex);
       nextDomainId = nextDomainId.substr(separatorIndex + 2);
+    } else if (tree) {
+      nextDomainFramework =
+          CodeAnalysis::getFrameworkForDomain(nextDomainId, tree);
     }
 
-    if (sourceDomainsList && destDomainsList) {
-      bool sourceDomainsMatch = false;
-      for (auto sourceDomain : sourceDomainsList->getChildren()) {
-        if (sourceDomain->getNodeType() == AST::String) {
-          if (std::static_pointer_cast<ValueNode>(sourceDomain)
-                  ->getStringValue() == previousDomainId) {
+    bool sourceDomainsMatch = false;
+    if (sourceDomainsList && sourceDomainsList->getNodeType() == AST::List) {
+      if (sourceDomainsList->getChildren().empty()) {
+        std::string sf =
+            sourceFramework ? ASTQuery::getNodeName(sourceFramework) : "";
+        if (sf.empty() || sf == previousDomainFramework ||
+            sf == previousDomainId) {
+          sourceDomainsMatch = true;
+        }
+      } else {
+        for (auto sourceDomain : sourceDomainsList->getChildren()) {
+          std::string sName = ASTQuery::getNodeName(sourceDomain);
+          if (sName == previousDomainId || sName == previousDomainFramework) {
             sourceDomainsMatch = true;
             break;
           }
         }
       }
-      bool destDomainsMatch = false;
-      for (auto destDomain : destDomainsList->getChildren()) {
-        if (destDomain->getNodeType() == AST::String) {
-          if (std::static_pointer_cast<ValueNode>(destDomain)
-                  ->getStringValue() == nextDomainId) {
+    } else if (sourceFramework) {
+      std::string sf = ASTQuery::getNodeName(sourceFramework);
+      if (sf == previousDomainFramework || sf == previousDomainId) {
+        sourceDomainsMatch = true;
+      }
+    }
+
+    bool destDomainsMatch = false;
+    if (destDomainsList && destDomainsList->getNodeType() == AST::List) {
+      if (destDomainsList->getChildren().empty()) {
+        std::string df =
+            destFramework ? ASTQuery::getNodeName(destFramework) : "";
+        if (df.empty() || df == nextDomainFramework || df == nextDomainId) {
+          destDomainsMatch = true;
+        }
+      } else {
+        for (auto destDomain : destDomainsList->getChildren()) {
+          std::string dName = ASTQuery::getNodeName(destDomain);
+          if (dName == nextDomainId || dName == nextDomainFramework) {
             destDomainsMatch = true;
             break;
           }
         }
       }
-      if (destDomainsMatch && sourceDomainsMatch) {
-        auto sourceStreams = connector->getPropertyValue("sourceStreams");
-        auto destStreams = connector->getPropertyValue("destinationStreams");
-        auto sourceImports = connector->getPropertyValue("sourceImports");
-        auto destImports = connector->getPropertyValue("destinationImports");
+    } else if (destFramework) {
+      std::string df = ASTQuery::getNodeName(destFramework);
+      if (df == nextDomainFramework || df == nextDomainId) {
+        destDomainsMatch = true;
+      }
+    }
 
-        domainChangeNodes.sourceStreams = sourceStreams;
+    if (destDomainsMatch && sourceDomainsMatch) {
+      auto sourceStreams = connector->getPropertyValue("sourceStreams");
+      auto destStreams = connector->getPropertyValue("destinationStreams");
+      auto sourceImports = connector->getPropertyValue("sourceImports");
+      auto destImports = connector->getPropertyValue("destinationImports");
 
-        domainChangeNodes.destStreams = destStreams;
+      if (sourceStreams && destStreams) {
+        std::map<std::string, ASTNode> effectiveProps;
+        for (const auto &prop : connector->getProperties()) {
+          if (!reservedProps.count(prop->getName())) {
+            effectiveProps[prop->getName()] = prop->getValue();
+          }
+        }
+        auto ovIt = connectionOverrides.find(connector->getName());
+        if (ovIt != connectionOverrides.end()) {
+          for (const auto &pair : ovIt->second) {
+            effectiveProps[pair.first] = pair.second;
+          }
+        }
 
-        // Process source
+        auto clonedSrc = sourceStreams->deepCopy();
+        auto clonedDst = destStreams->deepCopy();
+        domainChangeNodes.sourceStreams =
+            substitutePropertiesInAST(clonedSrc, effectiveProps);
+        domainChangeNodes.destStreams =
+            substitutePropertiesInAST(clonedDst, effectiveProps);
+
+        // Process source imports
         if (sourceImports) {
           for (auto import : sourceImports->getChildren()) {
             if (import->getNodeType() == AST::String) {
@@ -1255,36 +1441,33 @@ StrideSystem::getDomainChangeStreams(std::string previousDomainId,
                   std::static_pointer_cast<ValueNode>(import)->getStringValue();
               auto platformName =
                   connector->getPropertyValue("sourceFramework");
-              assert(platformName->getNodeType() == AST::String);
-              auto importTree = loadImportTree(
-                  importName, "",
-                  std::static_pointer_cast<ValueNode>(platformName)
-                      ->getStringValue());
-
-              auto builtinObjects = getImportTrees();
-              ASTNode newTree = std::make_shared<AST>();
-
-              for (auto node : importTree) {
-                newTree->addChild(node);
+              std::string fwStr;
+              if (platformName && platformName->getNodeType() == AST::String) {
+                fwStr = std::static_pointer_cast<ValueNode>(platformName)
+                            ->getStringValue();
+              } else if (platformName) {
+                fwStr = ASTQuery::getNodeName(platformName);
               }
-              for (auto node : importTree) {
-                ASTFunctions::fillDefaultPropertiesForNode(node, importTree);
-                ASTFunctions::insertRequiredObjectsForNode(node, builtinObjects,
-                                                           newTree);
+              if (!fwStr.empty()) {
+                auto importTree = loadImportTree(importName, "", fwStr);
+                auto builtinObjects = getImportTrees();
+                ASTNode newTree = std::make_shared<AST>();
+                for (auto node : importTree) {
+                  newTree->addChild(node);
+                }
+                for (auto node : importTree) {
+                  ASTFunctions::fillDefaultPropertiesForNode(node, importTree);
+                  ASTFunctions::insertRequiredObjectsForNode(
+                      node, builtinObjects, newTree);
+                }
+                injectResourceConfiguration(newTree);
+                domainChangeNodes.sourceImports = newTree;
               }
-
-              injectResourceConfiguration(newTree);
-              domainChangeNodes.sourceImports = newTree;
             }
           }
         }
 
-        //                    processStreamNode(static_pointer_cast<StreamNode>(sourceStreams->getChildren()[0])->getRight(),
-        //                            previousNode, scopeStack, domainCode);
-
-        //                    scopeStack.pop_back();
-
-        // Process destination
+        // Process destination imports
         if (destImports) {
           for (auto import : destImports->getChildren()) {
             if (import->getNodeType() == AST::String) {
@@ -1292,34 +1475,32 @@ StrideSystem::getDomainChangeStreams(std::string previousDomainId,
                   std::static_pointer_cast<ValueNode>(import)->getStringValue();
               auto platformName =
                   connector->getPropertyValue("destinationFramework");
-              assert(platformName->getNodeType() == AST::String);
-              auto importTree = loadImportTree(
-                  importName, "",
-                  std::static_pointer_cast<ValueNode>(platformName)
-                      ->getStringValue());
-              auto builtinObjects = getImportTrees();
-              ASTNode newTree = std::make_shared<AST>();
-
-              for (auto node : importTree) {
-                newTree->addChild(node);
+              std::string fwStr;
+              if (platformName && platformName->getNodeType() == AST::String) {
+                fwStr = std::static_pointer_cast<ValueNode>(platformName)
+                            ->getStringValue();
+              } else if (platformName) {
+                fwStr = ASTQuery::getNodeName(platformName);
               }
-              for (auto child : importTree) {
-                ASTFunctions::fillDefaultPropertiesForNode(child, importTree);
-                ASTFunctions::insertRequiredObjectsForNode(
-                    child, builtinObjects, newTree);
+              if (!fwStr.empty()) {
+                auto importTree = loadImportTree(importName, "", fwStr);
+                auto builtinObjects = getImportTrees();
+                ASTNode newTree = std::make_shared<AST>();
+                for (auto node : importTree) {
+                  newTree->addChild(node);
+                }
+                for (auto child : importTree) {
+                  ASTFunctions::fillDefaultPropertiesForNode(child, importTree);
+                  ASTFunctions::insertRequiredObjectsForNode(
+                      child, builtinObjects, newTree);
+                }
+                injectResourceConfiguration(newTree);
+                domainChangeNodes.destImports = newTree;
               }
-              injectResourceConfiguration(newTree);
-              domainChangeNodes.destImports = newTree;
-              //                                    scopeStack.push_back({"",
-              //                                    importTree->getChildren()});
             }
           }
         }
-
-        //                    processStreamNode(static_pointer_cast<StreamNode>(destStreams->getChildren()[0])->getLeft(),
-        //                            nullptr, scopeStack, domainCode);
-        //                    previousNode =
-        //                    static_pointer_cast<StreamNode>(destStreams->getChildren()[0])->getLeft();
+        break; // Match found and applied
       }
     }
   }
@@ -1329,65 +1510,11 @@ StrideSystem::getDomainChangeStreams(std::string previousDomainId,
 std::string StrideSystem::getCommonAncestorDomain(std::string domainId1,
                                                   std::string domainId2,
                                                   ASTNode tree) {
-
-  std::function<std::vector<std::string>(std::string, std::string)> getParents =
-      [&](std::string domainId,
-          std::string framework) -> std::vector<std::string> {
-    std::vector<std::string> parents;
-    if (framework.size() == 0) {
-      framework = CodeAnalysis::getFrameworkForDomain(domainId, tree);
-    }
-    auto domainDeclaration =
-        CodeAnalysis::findDomainDeclaration(domainId, tree);
-    parents.push_back(domainId);
-    if (domainDeclaration) {
-      auto parentDomain = domainDeclaration->getPropertyValue("parentDomain");
-      if (parentDomain && parentDomain->getNodeType() != AST::None) {
-        auto parentDomainCopy = parentDomain->deepCopy();
-        parentDomainCopy->setRootScope(framework);
-        //      auto parentDomainName =
-        //      CodeValidator::streamMemberName(parentDomain); auto
-        //      parentDomainDecl = CodeAnalysis::findDomainDeclaration(
-        //          parentDomainName, framework, tree);
-        auto parentDomainId =
-            CodeAnalysis::getDomainIdentifier(parentDomainCopy, {}, tree);
-        auto newParentDomains = getParents(parentDomainId, framework);
-        parents.insert(parents.end(), newParentDomains.begin(),
-                       newParentDomains.end());
-      }
-    }
-    return parents;
-  };
-
-  auto parents1 = getParents(domainId1, "");
-  auto parents2 = getParents(domainId2, "");
-
-  for (auto d1 : parents1) {
-    for (auto d2 : parents2) {
-      if (d1 == d2) {
-        return d1;
-      }
-    }
-  }
-
-  return "";
+  return CodeAnalysis::getCommonAncestorDomain(domainId1, domainId2, tree);
 }
 
 std::string StrideSystem::getParentDomain(std::string domainId, ASTNode tree) {
-  std::string parentDomainId;
-  std::string framework = CodeAnalysis::getFrameworkForDomain(domainId, tree);
-
-  auto domainDeclaration = CodeAnalysis::findDomainDeclaration(domainId, tree);
-  if (domainDeclaration) {
-    auto parentDomain = domainDeclaration->getPropertyValue("parentDomain");
-    if (parentDomain && parentDomain->getNodeType() != AST::None) {
-      auto parentDomainCopy = parentDomain->deepCopy();
-      parentDomainCopy->setRootScope(framework);
-      parentDomainId =
-          CodeAnalysis::getDomainIdentifier(parentDomainCopy, {}, tree);
-    }
-  }
-  return parentDomainId;
+  return CodeAnalysis::getParentDomain(domainId, tree);
 }
 
 std::shared_ptr<DeclarationNode>

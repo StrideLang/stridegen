@@ -51,6 +51,9 @@ public:
   CodeResolver(ASTNode tree, std::string striderootDir,
                SystemConfiguration systemConfig = SystemConfiguration(),
                FeatureConfig featureConfig = FeatureConfig());
+  CodeResolver(ASTNode tree, std::string striderootDir,
+               FeatureConfig featureConfig)
+      : CodeResolver(tree, striderootDir, SystemConfiguration(), featureConfig) {};
   ~CodeResolver();
 
   void process();

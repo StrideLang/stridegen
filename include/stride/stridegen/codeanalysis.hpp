@@ -64,6 +64,10 @@ public:
   static std::string getNodeDomainName(ASTNode node, ScopeStack scopeStack,
                                        ASTNode tree);
 
+  static std::string getParentDomain(const std::string &domainId, ASTNode tree);
+  static std::string getCommonAncestorDomain(const std::string &domainId1,
+                                            const std::string &domainId2,
+                                            ASTNode tree);
   static std::string getDomainIdentifier(ASTNode domain, ScopeStack scopeStack,
                                          ASTNode tree);
 

@@ -33,6 +33,7 @@
 #include <algorithm>
 #include <cassert>
 #include <cstdio>
+#include <functional>
 #include <iostream>
 #include <set>
 
@@ -487,6 +488,72 @@ std::string CodeAnalysis::getDomainIdentifier(ASTNode domain,
   return name;
 }
 
+std::string CodeAnalysis::getParentDomain(const std::string &domainId,
+                                          ASTNode tree) {
+  std::string parentDomainId;
+  std::string framework = CodeAnalysis::getFrameworkForDomain(domainId, tree);
+
+  auto domainDeclaration = CodeAnalysis::findDomainDeclaration(domainId, tree);
+  if (domainDeclaration) {
+    auto parentDomain = domainDeclaration->getPropertyValue("parentDomain");
+    if (parentDomain && parentDomain->getNodeType() != AST::None) {
+      auto parentDomainCopy = parentDomain->deepCopy();
+      parentDomainCopy->setRootScope(framework);
+      parentDomainId =
+          CodeAnalysis::getDomainIdentifier(parentDomainCopy, {}, tree);
+      if (parentDomainId == "none") {
+        parentDomainId = "";
+      }
+    }
+  }
+  return parentDomainId;
+}
+
+std::string CodeAnalysis::getCommonAncestorDomain(const std::string &domainId1,
+                                                  const std::string &domainId2,
+                                                  ASTNode tree) {
+  if (domainId1.empty() || domainId2.empty()) {
+    return "";
+  }
+  if (domainId1 == domainId2) {
+    return domainId1;
+  }
+
+  std::function<std::vector<std::string>(const std::string &,
+                                         std::set<std::string> &)>
+      getParents = [&](const std::string &domainId,
+                       std::set<std::string> &visited) -> std::vector<std::string> {
+    std::vector<std::string> parents;
+    if (domainId.empty() || visited.count(domainId)) {
+      return parents;
+    }
+    visited.insert(domainId);
+    parents.push_back(domainId);
+
+    std::string parentId = getParentDomain(domainId, tree);
+    if (!parentId.empty()) {
+      auto newParentDomains = getParents(parentId, visited);
+      parents.insert(parents.end(), newParentDomains.begin(),
+                     newParentDomains.end());
+    }
+    return parents;
+  };
+
+  std::set<std::string> visited1;
+  auto parents1 = getParents(domainId1, visited1);
+  std::set<std::string> visited2;
+  auto parents2 = getParents(domainId2, visited2);
+
+  for (const auto &d1 : parents1) {
+    for (const auto &d2 : parents2) {
+      if (d1 == d2) {
+        return d1;
+      }
+    }
+  }
+  return "";
+}
+
 double CodeAnalysis::getNodeRate(ASTNode node, ScopeStack scope, ASTNode tree) {
   if (!node) {
     return -1;
@@ -639,10 +706,12 @@ std::string CodeAnalysis::getFrameworkForDomain(std::string domainName,
         std::string declDomainName = decl->getName();
         if (declDomainName == domainName) {
           ASTNode frameworkNameValue = decl->getPropertyValue("framework");
-          if (frameworkNameValue->getNodeType() == AST::String) {
+          if (frameworkNameValue &&
+              frameworkNameValue->getNodeType() == AST::String) {
             return static_cast<ValueNode *>(frameworkNameValue.get())
                 ->getStringValue();
-          } else if (frameworkNameValue->getNodeType() == AST::Entity) {
+          } else if (frameworkNameValue &&
+                     frameworkNameValue->getNodeType() == AST::Entity) {
             auto fwBlock =
                 std::static_pointer_cast<EntityNode>(frameworkNameValue);
 

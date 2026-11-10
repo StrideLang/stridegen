@@ -82,6 +82,15 @@ public:
   // ReactionMainInput error.
   static std::vector<LangError> findReactionMainInputs(ASTNode tree);
 
+  // Reads across domains: a signal in one domain read from another domain is
+  // valid only if the domains share a common ancestor domain (shared memory)
+  // or an explicit connection exists between them.
+  static std::vector<LangError> findInvalidCrossDomainAccess(ASTNode tree);
+
+  // Property overrides on connections: checks that overridden properties match
+  // properties declared on the connection blueprint and satisfy constraints.
+  static std::vector<LangError> findInvalidConnectionProperties(ASTNode tree);
+
 private:
   void validateTree(ASTNode tree);
   void validate();

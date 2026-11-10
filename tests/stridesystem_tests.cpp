@@ -96,3 +96,99 @@ TEST(StrideSystem, FrameworkDataTypeNames) {
     EXPECT_EQ(frameworkName(jit.getFrameworkDataType("JIT", "UInt")),
               "uint32_t");
 }
+
+
+#include "stride/stridegen/codevalidator.hpp"
+#include "stride/parser/arraynode.h"
+#include "stride/parser/streamnode.h"
+#include "stride/parser/valuenode.h"
+
+TEST(StrideSystem, ParameterizedConnectionDefaults) {
+    std::string strideRoot = ASTFunctions::getDefaultStrideRoot();
+    StrideSystem system(strideRoot, "", -1, -1, {});
+
+    ASTNode tree = AST::parseFile(TESTS_SOURCE_DIR "validator/conn_param_default.stride");
+    ASSERT_TRUE(tree != nullptr);
+
+    system.generateDomainConnections(tree);
+
+    std::vector<std::shared_ptr<StreamNode>> streams;
+    for (const auto &node : tree->getChildren()) {
+        if (node->getNodeType() == AST::Stream) {
+            streams.push_back(std::static_pointer_cast<StreamNode>(node));
+        }
+    }
+    ASSERT_EQ(streams.size(), 2);
+    EXPECT_EQ(streams[0]->getLeft()->toText(0, 0, false), "SigA");
+    EXPECT_EQ(streams[0]->getRight()->toText(0, 0, false), "SerialOut[ 0 ]");
+    EXPECT_EQ(streams[1]->getLeft()->toText(0, 0, false), "SerialIn[ 0 ]");
+    EXPECT_EQ(streams[1]->getRight()->toText(0, 0, false), "SigB");
+}
+
+TEST(StrideSystem, ParameterizedConnectionOverrideInSystem) {
+    std::string strideRoot = ASTFunctions::getDefaultStrideRoot();
+    StrideSystem system(strideRoot, "", -1, -1, {});
+
+    ASTNode tree = AST::parseFile(TESTS_SOURCE_DIR "validator/conn_param_override.stride");
+    ASSERT_TRUE(tree != nullptr);
+
+    system.generateDomainConnections(tree);
+
+    std::vector<std::shared_ptr<StreamNode>> streams;
+    for (const auto &node : tree->getChildren()) {
+        if (node->getNodeType() == AST::Stream) {
+            streams.push_back(std::static_pointer_cast<StreamNode>(node));
+        }
+    }
+    ASSERT_EQ(streams.size(), 2);
+    EXPECT_EQ(streams[0]->getLeft()->toText(0, 0, false), "SigA");
+    EXPECT_EQ(streams[0]->getRight()->toText(0, 0, false), "SerialOut[ 2 ]");
+    EXPECT_EQ(streams[1]->getLeft()->toText(0, 0, false), "SerialIn[ 2 ]");
+    EXPECT_EQ(streams[1]->getRight()->toText(0, 0, false), "SigB");
+}
+
+TEST(StrideSystem, ParameterizedConnectionCallSyntax) {
+    std::string strideRoot = ASTFunctions::getDefaultStrideRoot();
+    StrideSystem system(strideRoot, "", -1, -1, {});
+
+    ASTNode tree = AST::parseFile(TESTS_SOURCE_DIR "validator/conn_param_call_syntax.stride");
+    ASSERT_TRUE(tree != nullptr);
+
+    system.generateDomainConnections(tree);
+
+    std::vector<std::shared_ptr<StreamNode>> streams;
+    for (const auto &node : tree->getChildren()) {
+        if (node->getNodeType() == AST::Stream) {
+            streams.push_back(std::static_pointer_cast<StreamNode>(node));
+        }
+    }
+    ASSERT_EQ(streams.size(), 2);
+    EXPECT_EQ(streams[0]->getLeft()->toText(0, 0, false), "SigA");
+    EXPECT_EQ(streams[0]->getRight()->toText(0, 0, false), "SerialOut[ 3 ]");
+    EXPECT_EQ(streams[1]->getLeft()->toText(0, 0, false), "SerialIn[ 3 ]");
+    EXPECT_EQ(streams[1]->getRight()->toText(0, 0, false), "SigB");
+}
+
+TEST(CodeValidator, ConnectionInvalidPropertyRejected) {
+    ASTNode tree = AST::parseFile(TESTS_SOURCE_DIR "validator/conn_invalid_prop.stride");
+    ASSERT_TRUE(tree != nullptr);
+
+    auto errors = CodeValidator::findInvalidConnectionProperties(tree);
+    ASSERT_EQ(errors.size(), 1);
+    EXPECT_EQ(errors[0].type, LangError::InvalidPort);
+    ASSERT_GE(errors[0].errorTokens.size(), 2);
+    EXPECT_EQ(errors[0].errorTokens[0], "TestSerialConn");
+    EXPECT_EQ(errors[0].errorTokens[1], "badProperty");
+}
+
+TEST(CodeValidator, ConnectionNegativePortRejected) {
+    ASTNode tree = AST::parseFile(TESTS_SOURCE_DIR "validator/conn_negative_port.stride");
+    ASSERT_TRUE(tree != nullptr);
+
+    auto errors = CodeValidator::findInvalidConnectionProperties(tree);
+    ASSERT_EQ(errors.size(), 1);
+    EXPECT_EQ(errors[0].type, LangError::ArrayIndexOutOfBounds);
+    ASSERT_GE(errors[0].errorTokens.size(), 2);
+    EXPECT_EQ(errors[0].errorTokens[0], "port");
+    EXPECT_EQ(errors[0].errorTokens[1], "-1");
+}

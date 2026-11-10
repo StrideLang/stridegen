@@ -1,0 +1,17 @@
+connection TestSerialConn {
+    port: 0
+    sourceDomains: ["DomainA"]
+    destinationDomains: ["DomainB"]
+    sourceStreams: [
+        _Connection_Token >> SerialOut[.port];
+    ]
+    destinationStreams: [
+        SerialIn[.port] >> _Connection_Token;
+    ]
+}
+
+system TestSys {
+    connections: [
+        TestSerialConn(port: -1)
+    ]
+}
