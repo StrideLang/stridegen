@@ -1077,7 +1077,25 @@ void StrideSystem::generateDomainConnections(ASTNode tree) {
                 ASTQuery::getNodeName(stream->getRight()), {},
                 domainChangeNodes.sourceImports, {},
                 getFrameworkAlias(previousFramework));
+            if (!nodeDecl && domainChangeNodes.sourceEntities) {
+              nodeDecl = ASTQuery::findDeclarationByName(
+                  ASTQuery::getNodeName(stream->getRight()), {},
+                  domainChangeNodes.sourceEntities, {},
+                  getFrameworkAlias(previousFramework));
+              if (!nodeDecl) {
+                nodeDecl = ASTQuery::findDeclarationByName(
+                    ASTQuery::getNodeName(stream->getRight()), {},
+                    domainChangeNodes.sourceEntities);
+              }
+            }
+            if (!nodeDecl) {
+              nodeDecl = ASTQuery::findDeclarationByName(
+                  ASTQuery::getNodeName(stream->getRight()), {}, tree);
+            }
             stream->getRight()->setCompilerProperty("declaration", nodeDecl);
+            stream->getRight()->setCompilerProperty(
+                "domain", std::make_shared<EntityNode>(previousDomainId,
+                                                       __FILE__, __LINE__));
             newStreams.push_back(stream);
 
             auto connectionNode =
@@ -1091,7 +1109,25 @@ void StrideSystem::generateDomainConnections(ASTNode tree) {
                 ASTQuery::getNodeName(connectionNode), {},
                 domainChangeNodes.destImports, {},
                 getFrameworkAlias(destFramework));
+            if (!nodeDecl && domainChangeNodes.destEntities) {
+              nodeDecl = ASTQuery::findDeclarationByName(
+                  ASTQuery::getNodeName(connectionNode), {},
+                  domainChangeNodes.destEntities, {},
+                  getFrameworkAlias(destFramework));
+              if (!nodeDecl) {
+                nodeDecl = ASTQuery::findDeclarationByName(
+                    ASTQuery::getNodeName(connectionNode), {},
+                    domainChangeNodes.destEntities);
+              }
+            }
+            if (!nodeDecl) {
+              nodeDecl = ASTQuery::findDeclarationByName(
+                  ASTQuery::getNodeName(connectionNode), {}, tree);
+            }
             connectionNode->setCompilerProperty("declaration", nodeDecl);
+            connectionNode->setCompilerProperty(
+                "domain", std::make_shared<EntityNode>(nextDomainId, __FILE__,
+                                                       __LINE__));
 
             // We need to remove the read domain from the reads metadata in
             // "next"
@@ -1112,12 +1148,88 @@ void StrideSystem::generateDomainConnections(ASTNode tree) {
               newChildren.insert(newChildren.end(), srcImportNodes.begin(),
                                  srcImportNodes.end());
             }
+            if (domainChangeNodes.sourceEntities) {
+              for (auto child : domainChangeNodes.sourceEntities->getChildren()) {
+                if (child->getNodeType() == AST::Declaration ||
+                    child->getNodeType() == AST::ArrayDeclaration) {
+                  auto childDecl =
+                      std::static_pointer_cast<DeclarationNode>(child);
+                  if (!childDecl->getPropertyValue("domain")) {
+                    childDecl->setPropertyValue(
+                        "domain", std::make_shared<EntityNode>(
+                                      previousDomainId, __FILE__, __LINE__));
+                  }
+                  if (!childDecl->getCompilerProperty("domain")) {
+                    childDecl->setCompilerProperty(
+                        "domain", std::make_shared<EntityNode>(
+                                      previousDomainId, __FILE__, __LINE__));
+                  }
+                  if (!previousFramework.empty() &&
+                      !childDecl->getCompilerProperty("framework")) {
+                    childDecl->setCompilerProperty(
+                        "framework", std::make_shared<ValueNode>(
+                                         previousFramework, __FILE__, __LINE__));
+                  }
+                  bool alreadyPresent = false;
+                  for (const auto &existing : newChildren) {
+                    if ((existing->getNodeType() == AST::Declaration ||
+                         existing->getNodeType() == AST::ArrayDeclaration) &&
+                        std::static_pointer_cast<DeclarationNode>(existing)
+                                ->getName() == childDecl->getName()) {
+                      alreadyPresent = true;
+                      break;
+                    }
+                  }
+                  if (!alreadyPresent) {
+                    newChildren.push_back(childDecl);
+                  }
+                }
+              }
+            }
             // FIXME a lot of redundant nodes are inserted here. Only insert if
             // not present
             if (domainChangeNodes.destImports) {
               auto destImportNodes = domainChangeNodes.destImports->getChildren();
               newChildren.insert(newChildren.end(), destImportNodes.begin(),
                                  destImportNodes.end());
+            }
+            if (domainChangeNodes.destEntities) {
+              for (auto child : domainChangeNodes.destEntities->getChildren()) {
+                if (child->getNodeType() == AST::Declaration ||
+                    child->getNodeType() == AST::ArrayDeclaration) {
+                  auto childDecl =
+                      std::static_pointer_cast<DeclarationNode>(child);
+                  if (!childDecl->getPropertyValue("domain")) {
+                    childDecl->setPropertyValue(
+                        "domain", std::make_shared<EntityNode>(
+                                      nextDomainId, __FILE__, __LINE__));
+                  }
+                  if (!childDecl->getCompilerProperty("domain")) {
+                    childDecl->setCompilerProperty(
+                        "domain", std::make_shared<EntityNode>(
+                                      nextDomainId, __FILE__, __LINE__));
+                  }
+                  if (!destFramework.empty() &&
+                      !childDecl->getCompilerProperty("framework")) {
+                    childDecl->setCompilerProperty(
+                        "framework", std::make_shared<ValueNode>(
+                                         destFramework, __FILE__, __LINE__));
+                  }
+                  bool alreadyPresent = false;
+                  for (const auto &existing : newChildren) {
+                    if ((existing->getNodeType() == AST::Declaration ||
+                         existing->getNodeType() == AST::ArrayDeclaration) &&
+                        std::static_pointer_cast<DeclarationNode>(existing)
+                                ->getName() == childDecl->getName()) {
+                      alreadyPresent = true;
+                      break;
+                    }
+                  }
+                  if (!alreadyPresent) {
+                    newChildren.push_back(childDecl);
+                  }
+                }
+              }
             }
           } else {
           }
@@ -1276,8 +1388,8 @@ StrideSystem::getDomainChangeStreams(std::string previousDomainId,
   static const std::set<std::string> reservedProps = {
       "sourceFramework",   "destinationFramework", "sourceDomains",
       "destinationDomains", "sourceStreams",        "destinationStreams",
-      "sourceImports",     "destinationImports",   "meta",
-      "label"};
+      "sourceImports",     "destinationImports",   "sourceEntities",
+      "destinationEntities", "meta",               "label"};
 
   if (tree) {
     for (const auto &node : tree->getChildren()) {
@@ -1287,7 +1399,9 @@ StrideSystem::getDomainChangeStreams(std::string previousDomainId,
           bool isBlueprint = decl->getPropertyValue("sourceStreams") ||
                              decl->getPropertyValue("destinationStreams") ||
                              decl->getPropertyValue("sourceDomains") ||
-                             decl->getPropertyValue("sourceFramework");
+                             decl->getPropertyValue("sourceFramework") ||
+                             decl->getPropertyValue("sourceEntities") ||
+                             decl->getPropertyValue("destinationEntities");
           bool alreadyExists = false;
           for (const auto &c : allConnectors) {
             if (c->getName() == decl->getName()) {
@@ -1411,6 +1525,8 @@ StrideSystem::getDomainChangeStreams(std::string previousDomainId,
       auto destStreams = connector->getPropertyValue("destinationStreams");
       auto sourceImports = connector->getPropertyValue("sourceImports");
       auto destImports = connector->getPropertyValue("destinationImports");
+      auto sourceEntities = connector->getPropertyValue("sourceEntities");
+      auto destEntities = connector->getPropertyValue("destinationEntities");
 
       if (sourceStreams && destStreams) {
         std::map<std::string, ASTNode> effectiveProps;
@@ -1432,6 +1548,17 @@ StrideSystem::getDomainChangeStreams(std::string previousDomainId,
             substitutePropertiesInAST(clonedSrc, effectiveProps);
         domainChangeNodes.destStreams =
             substitutePropertiesInAST(clonedDst, effectiveProps);
+
+        if (sourceEntities) {
+          auto clonedSrcEnt = sourceEntities->deepCopy();
+          domainChangeNodes.sourceEntities =
+              substitutePropertiesInAST(clonedSrcEnt, effectiveProps);
+        }
+        if (destEntities) {
+          auto clonedDstEnt = destEntities->deepCopy();
+          domainChangeNodes.destEntities =
+              substitutePropertiesInAST(clonedDstEnt, effectiveProps);
+        }
 
         // Process source imports
         if (sourceImports) {

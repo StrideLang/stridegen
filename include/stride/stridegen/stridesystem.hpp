@@ -37,8 +37,10 @@ namespace strd {
 typedef struct {
   ASTNode sourceStreams;
   ASTNode sourceImports;
+  ASTNode sourceEntities;
   ASTNode destStreams;
   ASTNode destImports;
+  ASTNode destEntities;
 } ConnectionNodes;
 
 class StrideSystem {

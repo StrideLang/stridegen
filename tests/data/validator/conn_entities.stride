@@ -1,0 +1,38 @@
+connection HeteroBridgeConn {
+    port: 2
+    baudRate: 115200
+    sourceDomains: ["DomainA"]
+    destinationDomains: ["DomainB"]
+    sourceEntities: [
+        constant PortNumber { value: .port }
+        platformModule NativeHostSender {
+            inputs: [ Real ]
+            outputs: [ Real ]
+            processing: "%%outtokens:0%% = llvm::call void @host_send(double %%intokens:0%%)"
+        }
+    ]
+    destinationEntities: [
+        platformModule NativeMcuReceiver {
+            inputs: []
+            outputs: [ Real ]
+            processing: "%%outtokens:0%% = llvm::call double @mcu_recv()"
+        }
+    ]
+    sourceStreams: [
+        _Connection_Token >> NativeHostSender();
+    ]
+    destinationStreams: [
+        NativeMcuReceiver() >> _Connection_Token;
+    ]
+}
+
+_domainDefinition DomainA {
+}
+
+_domainDefinition DomainB {
+}
+
+signal SigA { domain: DomainA }
+signal SigB { domain: DomainB }
+
+SigA >> SigB;

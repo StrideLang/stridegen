@@ -25,7 +25,9 @@
 #include "gtest/gtest.h"
 
 #include "stride/stridegen/stridesystem.hpp"
+#include "stride/stridegen/codeanalysis.hpp"
 #include "stride/utils/astfunctions.h"
+#include "stride/utils/astquery.h"
 
 using namespace strd;
 
@@ -192,3 +194,62 @@ TEST(CodeValidator, ConnectionNegativePortRejected) {
     EXPECT_EQ(errors[0].errorTokens[0], "port");
     EXPECT_EQ(errors[0].errorTokens[1], "-1");
 }
+
+TEST(StrideSystem, ConnectionSourceAndDestinationEntities) {
+    std::string strideRoot = ASTFunctions::getDefaultStrideRoot();
+    StrideSystem system(strideRoot, "", -1, -1, {});
+
+    ASTNode tree = AST::parseFile(TESTS_SOURCE_DIR "validator/conn_entities.stride");
+    ASSERT_TRUE(tree != nullptr);
+
+    auto propErrors = CodeValidator::findInvalidConnectionProperties(tree);
+    EXPECT_TRUE(propErrors.empty());
+
+    system.generateDomainConnections(tree);
+
+    std::vector<std::shared_ptr<StreamNode>> streams;
+    std::shared_ptr<DeclarationNode> hostSenderDecl;
+    std::shared_ptr<DeclarationNode> mcuReceiverDecl;
+    std::shared_ptr<DeclarationNode> portNumberDecl;
+
+    for (const auto &node : tree->getChildren()) {
+        if (node->getNodeType() == AST::Stream) {
+            streams.push_back(std::static_pointer_cast<StreamNode>(node));
+        } else if (node->getNodeType() == AST::Declaration) {
+            auto decl = std::static_pointer_cast<DeclarationNode>(node);
+            if (decl->getName() == "NativeHostSender") {
+                hostSenderDecl = decl;
+            } else if (decl->getName() == "NativeMcuReceiver") {
+                mcuReceiverDecl = decl;
+            } else if (decl->getName() == "PortNumber") {
+                portNumberDecl = decl;
+            }
+        }
+    }
+
+    ASSERT_EQ(streams.size(), 2);
+    EXPECT_EQ(streams[0]->getLeft()->toText(0, 0, false), "SigA");
+    EXPECT_EQ(streams[0]->getRight()->toText(0, 0, false), "NativeHostSender()");
+    EXPECT_EQ(streams[1]->getLeft()->toText(0, 0, false), "NativeMcuReceiver()");
+    EXPECT_EQ(streams[1]->getRight()->toText(0, 0, false), "SigB");
+
+    ASSERT_TRUE(hostSenderDecl != nullptr);
+    ASSERT_TRUE(mcuReceiverDecl != nullptr);
+    ASSERT_TRUE(portNumberDecl != nullptr);
+
+    auto portVal = portNumberDecl->getPropertyValue("value");
+    ASSERT_TRUE(portVal != nullptr);
+    EXPECT_EQ(portVal->toText(0, 0, false), "2");
+
+    EXPECT_EQ(CodeAnalysis::getNodeDomainName(hostSenderDecl, {}, tree), "DomainA");
+    EXPECT_EQ(CodeAnalysis::getNodeDomainName(mcuReceiverDecl, {}, tree), "DomainB");
+
+    auto senderCallDecl = streams[0]->getRight()->getCompilerProperty("declaration");
+    ASSERT_TRUE(senderCallDecl != nullptr);
+    EXPECT_EQ(ASTQuery::getNodeName(senderCallDecl), "NativeHostSender");
+
+    auto recvCallDecl = streams[1]->getLeft()->getCompilerProperty("declaration");
+    ASSERT_TRUE(recvCallDecl != nullptr);
+    EXPECT_EQ(ASTQuery::getNodeName(recvCallDecl), "NativeMcuReceiver");
+}
+

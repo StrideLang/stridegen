@@ -723,7 +723,9 @@ CodeValidator::findInvalidConnectionProperties(ASTNode tree) {
         if (decl->getPropertyValue("sourceStreams") ||
             decl->getPropertyValue("destinationStreams") ||
             decl->getPropertyValue("sourceDomains") ||
-            decl->getPropertyValue("sourceFramework")) {
+            decl->getPropertyValue("sourceFramework") ||
+            decl->getPropertyValue("sourceEntities") ||
+            decl->getPropertyValue("destinationEntities")) {
           blueprints[decl->getName()] = decl;
         }
       }
@@ -733,8 +735,8 @@ CodeValidator::findInvalidConnectionProperties(ASTNode tree) {
   static const std::set<std::string> reservedProps = {
       "sourceFramework",   "destinationFramework", "sourceDomains",
       "destinationDomains", "sourceStreams",        "destinationStreams",
-      "sourceImports",     "destinationImports",   "meta",
-      "label"};
+      "sourceImports",     "destinationImports",   "sourceEntities",
+      "destinationEntities", "meta",               "label"};
 
   auto checkProps = [&](const std::string &connName,
                         const std::vector<std::shared_ptr<PropertyNode>> &props,
