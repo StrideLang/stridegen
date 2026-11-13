@@ -96,7 +96,8 @@ StrideSystem::StrideSystem(std::string strideRoot, std::string systemName,
   std::string systemFile = m_systemPath + "/System.stride";
 
   for (const auto &importNode : importList) {
-    m_importList[importNode->importName()] = importNode->importAlias();
+    m_importList[ASTQuery::getImportPath(importNode)] =
+        importNode->importAlias();
   }
 
   if (std::filesystem::exists(systemFile)) {
@@ -227,7 +228,7 @@ void StrideSystem::parseSystemTree(ASTNode systemTree, ASTNode configuration) {
             auto platformSpecBlock =
                 std::static_pointer_cast<EntityNode>(platformName);
             auto platformSpec = ASTQuery::findDeclarationByName(
-                platformSpecBlock->getName(), {}, systemTree);
+                platformSpecBlock->getName(), {}, systemTree, {});
             if (platformSpec) {
               auto platformBlock = platformSpec->getPropertyValue("framework");
               auto rootNamespaceBlock =
@@ -1072,7 +1073,8 @@ void StrideSystem::generateDomainConnections(ASTNode tree) {
                                                     stream->getLeft());
             auto previousFramework =
                 CodeAnalysis::getFrameworkForDomain(previousDomainId, tree);
-            // We should validate with provided connection framework
+            // We should validate with provided connection framework. These
+            // lookups are deliberately unqualified (namespaces `{}`).
             auto nodeDecl = ASTQuery::findDeclarationByName(
                 ASTQuery::getNodeName(stream->getRight()), {},
                 domainChangeNodes.sourceImports, {},
@@ -1085,12 +1087,12 @@ void StrideSystem::generateDomainConnections(ASTNode tree) {
               if (!nodeDecl) {
                 nodeDecl = ASTQuery::findDeclarationByName(
                     ASTQuery::getNodeName(stream->getRight()), {},
-                    domainChangeNodes.sourceEntities);
+                    domainChangeNodes.sourceEntities, {});
               }
             }
             if (!nodeDecl) {
               nodeDecl = ASTQuery::findDeclarationByName(
-                  ASTQuery::getNodeName(stream->getRight()), {}, tree);
+                  ASTQuery::getNodeName(stream->getRight()), {}, tree, {});
             }
             stream->getRight()->setCompilerProperty("declaration", nodeDecl);
             stream->getRight()->setCompilerProperty(
@@ -1117,12 +1119,12 @@ void StrideSystem::generateDomainConnections(ASTNode tree) {
               if (!nodeDecl) {
                 nodeDecl = ASTQuery::findDeclarationByName(
                     ASTQuery::getNodeName(connectionNode), {},
-                    domainChangeNodes.destEntities);
+                    domainChangeNodes.destEntities, {});
               }
             }
             if (!nodeDecl) {
               nodeDecl = ASTQuery::findDeclarationByName(
-                  ASTQuery::getNodeName(connectionNode), {}, tree);
+                  ASTQuery::getNodeName(connectionNode), {}, tree, {});
             }
             connectionNode->setCompilerProperty("declaration", nodeDecl);
             connectionNode->setCompilerProperty(

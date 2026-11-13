@@ -376,12 +376,11 @@ void CodeResolver::processSystem() {
       if (cond && !FeatureResolver::isConditionMet(cond, m_featureConfig)) {
         continue;
       }
-      // TODO add namespace support here (e.g. import
-      // Platform::Filters::Filter)
       bool imported = false;
       for (const auto &importNode : importList) {
-        if ((std::static_pointer_cast<ImportNode>(importNode)->importName() ==
-             import->importName()) &&
+        if ((ASTQuery::getImportPath(
+                 std::static_pointer_cast<ImportNode>(importNode)) ==
+             ASTQuery::getImportPath(import)) &&
             (std::static_pointer_cast<ImportNode>(importNode)->importAlias() ==
              import->importAlias())) {
           imported = true;
@@ -402,7 +401,7 @@ void CodeResolver::processSystem() {
 
     // Load nodes for imports
     for (const auto &import : importList) {
-      std::string importName = import->importName();
+      std::string importName = ASTQuery::getImportPath(import);
       std::string importAlias = import->importAlias();
       m_system->loadImportTree(importName, importAlias);
     }
@@ -731,8 +730,7 @@ void CodeResolver::markNodePersistence(ASTNode streamsList, ASTNode blocksList,
 
         // TODO handle streams inside functions recursively.
         if (node->getNodeType() == AST::Function) {
-          auto funcDecl = ASTQuery::findDeclarationByName(
-              ASTQuery::getNodeName(node), scope, m_tree);
+          auto funcDecl = ASTQuery::findDeclarationForNode(node, scope, m_tree);
           if (funcDecl) {
             auto funcDeclType = ASTQuery::findTypeDeclarationByName(
                 funcDecl->getEntityType(), scope, m_tree);
@@ -2217,8 +2215,7 @@ void CodeResolver::analyzeConnections() {
                 decl->getCompilerProperty("domainReads")->addChild(node);
               }
             } else if (domain->getNodeType() == AST::Entity) {
-              decl = ASTQuery::findDeclarationByName(
-                  ASTQuery::getNodeName(domain), {}, m_tree);
+              decl = ASTQuery::findDeclarationForNode(domain, {}, m_tree);
               if (decl) {
                 decl->getCompilerProperty("domainReads")->addChild(node);
               }
@@ -2263,8 +2260,7 @@ void CodeResolver::analyzeConnections() {
                 decl->getCompilerProperty("domainWrites")->addChild(node);
               }
             } else if (domain->getNodeType() == AST::Entity) {
-              decl = ASTQuery::findDeclarationByName(
-                  ASTQuery::getNodeName(domain), {}, m_tree);
+              decl = ASTQuery::findDeclarationForNode(domain, {}, m_tree);
               if (decl && decl->getCompilerProperty("domainReads")) {
                 decl->getCompilerProperty("domainReads")->addChild(node);
               } else {
@@ -2928,8 +2924,7 @@ void CodeResolver::resolveDomainsForStream(std::shared_ptr<StreamNode> stream,
     } else if (left->getNodeType() == AST::Function) {
       auto func = std::static_pointer_cast<FunctionNode>(left);
 
-      auto decl = ASTQuery::findDeclarationByName(ASTQuery::getNodeName(left),
-                                                  scopeStack, m_tree);
+      auto decl = ASTQuery::findDeclarationForNode(left, scopeStack, m_tree);
 
       if (decl) {
         if (decl->getEntityType() == "module" ||
@@ -3015,8 +3010,7 @@ void CodeResolver::setDomainForNode(ASTNode node, ASTNode domain,
   } else if (node->getNodeType() == AST::Entity ||
              node->getNodeType() == AST::Array) {
     std::shared_ptr<DeclarationNode> declaration =
-        ASTQuery::findDeclarationByName(ASTQuery::getNodeName(node), scopeStack,
-                                        tree);
+        ASTQuery::findDeclarationForNode(node, scopeStack, tree);
     if (declaration && !ASTQuery::isConstant(declaration, scopeStack, tree)) {
       auto typeDeclaration =
           ASTQuery::findTypeDeclaration(declaration, scopeStack, tree);
@@ -3057,8 +3051,7 @@ ASTNode CodeResolver::processDomainsForNode(ASTNode node, ScopeStack scopeStack,
   resolveDomainForStreamNode(node, scopeStack);
   if (node->getNodeType() == AST::Entity || node->getNodeType() == AST::Array) {
     std::shared_ptr<DeclarationNode> declaration =
-        ASTQuery::findDeclarationByName(ASTQuery::getNodeName(node), scopeStack,
-                                        m_tree, node->getNamespaceList());
+        ASTQuery::findDeclarationForNode(node, scopeStack, m_tree);
 
     if (declaration) {
       ASTNode domain = declaration->getDomain();
@@ -3119,8 +3112,7 @@ ASTNode CodeResolver::processDomainsForNode(ASTNode node, ScopeStack scopeStack,
 
       if (scopeStack.size() > 0) {
         std::shared_ptr<DeclarationNode> scopeDeclaration =
-            ASTQuery::findDeclarationByName(ASTQuery::getNodeName(node),
-                                            {scopeStack.back()}, nullptr);
+            ASTQuery::findDeclarationForNode(node, {scopeStack.back()}, nullptr);
         if (scopeDeclaration) {
           std::shared_ptr<ListNode> parentList =
               std::make_shared<ListNode>(__FILE__, __LINE__);
@@ -3587,7 +3579,7 @@ void CodeResolver::expandNamesToArrays(std::shared_ptr<StreamNode> stream,
     EntityNode *name = static_cast<EntityNode *>(left.get());
     ScopeStack scope;
     std::shared_ptr<DeclarationNode> decl =
-        ASTQuery::findDeclarationByName(name->getName(), scope, tree);
+        ASTQuery::findDeclarationByName(name->getName(), scope, tree, name->getNamespaceList());
     int size = 0;
     if (decl) {
       if (decl->getNodeType() == AST::ArrayDeclaration) {
@@ -3688,8 +3680,7 @@ CodeResolver::declareUnknownStreamSymbols(std::shared_ptr<StreamNode> stream,
           std::static_pointer_cast<EntityNode>(right);
       int size = 0;
       if (left->getNodeType() == AST::Function) {
-        auto funcDecl = ASTQuery::findDeclarationByName(
-            ASTQuery::getNodeName(left), localScope, tree);
+        auto funcDecl = ASTQuery::findDeclarationForNode(left, localScope, tree);
         if (funcDecl) {
           size = CodeAnalysis::getTypeNumOutputs(funcDecl, localScope, m_tree);
         }
@@ -3740,12 +3731,10 @@ void CodeResolver::declareInternalEntitiesForNode(ASTNode node,
   //  {{decl->getName(), internalBlocks->getChildren()}}
   auto findDeclarationWithinFunctionScope = [&](ASTNode portEntity,
                                                 ScopeStack innerScope) {
-    auto portBlockDecl = ASTQuery::findDeclarationByName(
-        ASTQuery::getNodeName(portEntity), innerScope, nullptr);
+    auto portBlockDecl = ASTQuery::findDeclarationForNode(portEntity, innerScope, nullptr);
     if (!portBlockDecl) {
       // Check for constants in parent nodes
-      auto rootPortBlockDecl = ASTQuery::findDeclarationByName(
-          ASTQuery::getNodeName(portEntity), subScope, m_tree);
+      auto rootPortBlockDecl = ASTQuery::findDeclarationForNode(portEntity, subScope, m_tree);
       if (rootPortBlockDecl &&
           ASTQuery::isConstant(rootPortBlockDecl, subScope, m_tree)) {
         portBlockDecl = rootPortBlockDecl;
@@ -4143,7 +4132,7 @@ void CodeResolver::setPortEntityAttributesForDeclaration(
       auto entityNode = std::static_pointer_cast<EntityNode>(portEntityNode);
 
       auto entityDecl = ASTQuery::findDeclarationByName(
-          entityNode->getName(), {}, decl->getPropertyValue("entities"));
+          entityNode->getName(), {}, decl->getPropertyValue("entities"), entityNode->getNamespaceList());
       if (entityDecl) {
         setPortAttributesForEntity(entityDecl, inputPortNode->getName());
       }
@@ -4157,7 +4146,7 @@ void CodeResolver::setPortEntityAttributesForDeclaration(
       auto entityNode = std::static_pointer_cast<EntityNode>(portEntityNode);
 
       auto entityDecl = ASTQuery::findDeclarationByName(
-          entityNode->getName(), {}, decl->getPropertyValue("entities"));
+          entityNode->getName(), {}, decl->getPropertyValue("entities"), entityNode->getNamespaceList());
       if (entityDecl) {
         setPortAttributesForEntity(entityDecl, outputPortNode->getName());
       }
@@ -4337,7 +4326,7 @@ CodeResolver::sliceStreamByDomain(std::shared_ptr<StreamNode> stream,
               std::static_pointer_cast<FunctionNode>(right);
           std::shared_ptr<DeclarationNode> decl =
               ASTQuery::findDeclarationByName(func->getName(), scopeStack,
-                                              m_tree);
+                                              m_tree, func->getNamespaceList());
           //                        if (decl->getEntityType() == "reaction"
           //                                || decl->getEntityType() ==
           //                                "loop")
@@ -4496,8 +4485,7 @@ CodeResolver::getDomainOfUsedGlobals(const std::vector<ASTNode> &streams) {
     }
     if (node->getNodeType() == AST::Entity ||
         node->getNodeType() == AST::Array) {
-      auto decl = ASTQuery::findDeclarationByName(ASTQuery::getNodeName(node),
-                                                  {}, m_tree);
+      auto decl = ASTQuery::findDeclarationForNode(node, {}, m_tree);
       auto domain = decl ? decl->getDomain() : nullptr;
       if (domain && domain->getNodeType() != AST::None) {
         std::string id = CodeAnalysis::getDomainIdentifier(domain, {}, m_tree);
@@ -4599,8 +4587,7 @@ void CodeResolver::resolveDomainForStreamNode(ASTNode node,
   ASTNode domain = nullptr;
   if (node->getNodeType() == AST::Entity || node->getNodeType() == AST::Array) {
     std::shared_ptr<DeclarationNode> declaration =
-        ASTQuery::findDeclarationByName(ASTQuery::getNodeName(node), scopeStack,
-                                        m_tree, node->getNamespaceList());
+        ASTQuery::findDeclarationForNode(node, scopeStack, m_tree);
     if (declaration) {
       auto typeDeclaration =
           ASTQuery::findTypeDeclaration(declaration, scopeStack, m_tree);
@@ -4997,9 +4984,7 @@ void CodeResolver::markConnectionForNode(ASTNode node, ScopeStack scopeStack,
             frameworkName = std::static_pointer_cast<ValueNode>(frameworkNode)
                                 ->getStringValue();
           }
-          auto decl = ASTQuery::findDeclarationByName(
-              ASTQuery::getNodeName(indexChild), scopeStack, m_tree,
-              indexChild->getNamespaceList(), frameworkName);
+          auto decl = ASTQuery::findDeclarationForNode(indexChild, scopeStack, m_tree, frameworkName);
           if (decl) {
             if (domain) {
               decl->appendToPropertyValue("reads", domain);
@@ -5084,8 +5069,7 @@ void CodeResolver::markConnectionForNode(ASTNode node, ScopeStack scopeStack,
       if (decl->getEntityType() == "iterator") {
         auto doneTrigger = decl->getPropertyValue("done");
         if (doneTrigger) {
-          auto doneTriggerDecl = ASTQuery::findDeclarationByName(
-              ASTQuery::getNodeName(doneTrigger), scopeStack, m_tree);
+          auto doneTriggerDecl = ASTQuery::findDeclarationForNode(doneTrigger, scopeStack, m_tree);
           if (doneTriggerDecl) {
             auto triggerDests =
                 doneTriggerDecl->getCompilerProperty("triggerDestinations");
@@ -5108,8 +5092,7 @@ void CodeResolver::markConnectionForNode(ASTNode node, ScopeStack scopeStack,
       // Check if previous is trigger
       std::shared_ptr<DeclarationNode> previousDecl;
       if (previous) {
-        previousDecl = ASTQuery::findDeclarationByName(
-            ASTQuery::getNodeName(previous), scopeStack, m_tree);
+        previousDecl = ASTQuery::findDeclarationForNode(previous, scopeStack, m_tree);
         if (previousDecl && previousDecl->getEntityType() == "trigger") {
           if (!previousDecl->getCompilerProperty("triggerDestinations")) {
             previousDecl->setCompilerProperty(
@@ -5127,8 +5110,7 @@ void CodeResolver::markConnectionForNode(ASTNode node, ScopeStack scopeStack,
       if (resetProp && (resetProp->getNodeType() == AST::Entity ||
                         resetProp->getNodeType() == AST::Array)) {
         // TODO should trigger bundles be allowed?
-        auto triggerDecl = ASTQuery::findDeclarationByName(
-            ASTQuery::getNodeName(resetProp), scopeStack, m_tree);
+        auto triggerDecl = ASTQuery::findDeclarationForNode(resetProp, scopeStack, m_tree);
         if (triggerDecl) {
           if (!triggerDecl->getCompilerProperty("triggerResets")) {
             triggerDecl->setCompilerProperty(
@@ -5302,8 +5284,7 @@ void CodeResolver::storeDeclarationsForNode(ASTNode node, ScopeStack scopeStack,
         node->getCompilerProperty("declaration"));
     std::shared_ptr<DeclarationNode> decl = cachedDecl;
     if (!decl) {
-      decl = ASTQuery::findDeclarationByName(ASTQuery::getNodeName(node),
-                                             scopeStack, tree);
+      decl = ASTQuery::findDeclarationForNode(node, scopeStack, tree);
       if (decl && decl->getEntityType() != "platformModule") {
         node->setCompilerProperty("declaration", decl);
       }
@@ -5323,8 +5304,7 @@ void CodeResolver::storeDeclarationsForNode(ASTNode node, ScopeStack scopeStack,
     auto cachedDecl = std::static_pointer_cast<DeclarationNode>(
         node->getCompilerProperty("declaration"));
     if (!cachedDecl) {
-      auto decl = ASTQuery::findDeclarationByName(ASTQuery::getNodeName(node),
-                                                  scopeStack, tree);
+      auto decl = ASTQuery::findDeclarationForNode(node, scopeStack, tree);
       if (decl && decl->getEntityType() != "platformModule") {
         node->setCompilerProperty("declaration", decl);
       }

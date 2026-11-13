@@ -399,7 +399,7 @@ void collectUnsizedPorts(ASTNode node, ASTNode tree,
   }
   if (node->getNodeType() == AST::Function) {
     auto func = std::static_pointer_cast<FunctionNode>(node);
-    auto decl = ASTQuery::findDeclarationByName(func->getName(), {}, tree);
+    auto decl = ASTQuery::findDeclarationByName(func->getName(), {}, tree, func->getNamespaceList());
     if (decl && (decl->getEntityType() == "module" ||
                  decl->getEntityType() == "loop" ||
                  decl->getEntityType() == "reaction")) {
@@ -526,7 +526,7 @@ bool hasConnectionBetween(const std::string &srcDom, const std::string &dstDom,
                 return true;
             } else if (item->getNodeType() == AST::Entity) {
               auto connDecl = ASTQuery::findDeclarationByName(
-                  std::static_pointer_cast<EntityNode>(item)->getName(), {}, tree);
+                  std::static_pointer_cast<EntityNode>(item)->getName(), {}, tree, std::static_pointer_cast<EntityNode>(item)->getNamespaceList());
               if (checkConnectionDecl(connDecl))
                 return true;
             }
@@ -1187,8 +1187,7 @@ void CodeValidator::validateNodeRate(ASTNode node, ASTNode tree) {
       auto domDecl =
           !domId.empty() ? CodeAnalysis::findDomainDeclaration(domId, tree) : nullptr;
       if (domDecl && CodeAnalysis::getDomainDefaultRate(domDecl) > 0) {
-        auto decl = ASTQuery::findDeclarationByName(
-            ASTQuery::getNodeName(node), {}, tree, node->getNamespaceList());
+        auto decl = ASTQuery::findDeclarationForNode(node, {}, tree);
         if (decl && (decl->getEntityType() == "signal" ||
                      decl->getEntityType() == "switch")) {
           double rate = CodeAnalysis::getNodeRate(node, {}, tree);
@@ -1385,17 +1384,14 @@ void CodeValidator::validateStreamInputSize(StreamNode *stream,
   int rightInSize =
       CodeAnalysis::getNodeNumInputs(right, scope, m_tree, &errors);
 
-  auto leftDecl = ASTQuery::findDeclarationByName(ASTQuery::getNodeName(left),
-                                                  scope, m_tree);
+  auto leftDecl = ASTQuery::findDeclarationForNode(left, scope, m_tree);
   std::shared_ptr<DeclarationNode> rightDecl;
   if (right->getNodeType() == AST::Stream) {
     auto nextStreamMember =
         std::static_pointer_cast<StreamNode>(right)->getLeft();
-    rightDecl = ASTQuery::findDeclarationByName(
-        ASTQuery::getNodeName(nextStreamMember), scope, m_tree);
+    rightDecl = ASTQuery::findDeclarationForNode(nextStreamMember, scope, m_tree);
   } else {
-    rightDecl = ASTQuery::findDeclarationByName(ASTQuery::getNodeName(right),
-                                                scope, m_tree);
+    rightDecl = ASTQuery::findDeclarationForNode(right, scope, m_tree);
   }
   if ((leftDecl && leftDecl->getEntityType() == "buffer") ||
       (rightDecl && rightDecl->getEntityType() == "buffer")) {
