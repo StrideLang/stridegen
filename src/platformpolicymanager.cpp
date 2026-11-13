@@ -19,6 +19,7 @@
 */
 
 #include "stride/stridegen/platformpolicymanager.hpp"
+#include "stride/stridegen/hardwareresolver.hpp"
 #include "stride/parser/valuenode.h"
 #include "stride/utils/astquery.h"
 
@@ -40,29 +41,6 @@ void PlatformPolicyManager::clear() {
   m_resources.clear();
   m_supportedDevices.clear();
   m_bindings.clear();
-}
-
-std::shared_ptr<DeclarationNode> PlatformPolicyManager::loadDeviceDeclaration(
-    const std::string &strideroot, const std::string &platformName,
-    const std::string &deviceName) {
-  std::string devPath = strideroot + "/platforms/" + platformName + "/devices/" +
-                        deviceName + ".stride";
-  if (!std::filesystem::exists(devPath)) {
-    return nullptr;
-  }
-  auto devTree = AST::parseFile(devPath.c_str(), nullptr);
-  if (!devTree) {
-    return nullptr;
-  }
-  for (const auto &child : devTree->getChildren()) {
-    if (child->getNodeType() == AST::Declaration) {
-      auto decl = std::static_pointer_cast<DeclarationNode>(child);
-      if (decl->getEntityType() == "device" && decl->getName() == deviceName) {
-        return decl;
-      }
-    }
-  }
-  return nullptr;
 }
 
 void PlatformPolicyManager::parsePolicyBindings(
@@ -195,63 +173,21 @@ bool PlatformPolicyManager::loadPlatform(const std::string &strideroot,
     return true;
   }
 
-  // Follow overlay chain up to base device
-  std::vector<std::string> overlayChain;
-  std::set<std::string> visited;
-  std::string curr = activeDevice;
-  while (!curr.empty() && !visited.count(curr)) {
-    visited.insert(curr);
-    overlayChain.push_back(curr);
-    auto devDecl = loadDeviceDeclaration(strideroot, platformName, curr);
-    if (!devDecl) {
-      break;
-    }
-    auto overlaysProp = devDecl->getPropertyValue("overlays");
-    if (overlaysProp && overlaysProp->getNodeType() != AST::None) {
-      curr = ASTQuery::getNodeName(overlaysProp);
-    } else {
-      break;
-    }
+  // The device may be a board, a device or a core, and overlays whatever is
+  // below it. HardwareResolver applies the merge rules: resources accumulate
+  // and compilerFlags is overridden by the layer above.
+  HardwareResolver resolver(strideroot);
+  auto resolved = resolver.resolve(platformName, activeDevice);
+  if (!resolved) {
+    return true; // unknown device: platform baseline only, as before
   }
+  m_resources = resolved->nameListProperty("resources");
+  m_compilerFlags = resolved->stringProperty("compilerFlags");
 
-  // Reverse so base device is applied first, leaf overlay last
-  std::reverse(overlayChain.begin(), overlayChain.end());
-
-  for (const auto &devName : overlayChain) {
-    auto devDecl = loadDeviceDeclaration(strideroot, platformName, devName);
-    if (!devDecl) {
-      continue;
-    }
-
-    // Cumulative resources
-    auto resProp = devDecl->getPropertyValue("resources");
-    if (resProp) {
-      if (resProp->getNodeType() == AST::List) {
-        for (const auto &child : resProp->getChildren()) {
-          std::string rName = ASTQuery::getNodeName(child);
-          if (std::find(m_resources.begin(), m_resources.end(), rName) ==
-              m_resources.end()) {
-            m_resources.push_back(rName);
-          }
-        }
-      } else {
-        std::string rName = ASTQuery::getNodeName(resProp);
-        if (std::find(m_resources.begin(), m_resources.end(), rName) ==
-            m_resources.end()) {
-          m_resources.push_back(rName);
-        }
-      }
-    }
-
-    // Compiler flags (overridden by child)
-    auto flagsProp = devDecl->getPropertyValue("compilerFlags");
-    if (flagsProp && flagsProp->getNodeType() == AST::String) {
-      m_compilerFlags =
-          std::static_pointer_cast<ValueNode>(flagsProp)->getStringValue();
-    }
-
-    // Device policies (overridden by child)
-    parsePolicyBindings(devDecl, "devicePolicies");
+  // Policies are bindings, not plain values: apply each layer's in order so
+  // the layer above overrides a binding for the same function.
+  for (const auto &layer : resolved->chain()) {
+    parsePolicyBindings(layer.declaration, "devicePolicies");
   }
 
   return true;

@@ -14,6 +14,7 @@ set(STRIDEGEN_SRC
   src/languagesyntax.cpp
   src/toolmanager.cpp
   src/platformpolicymanager.cpp
+  src/hardwareresolver.cpp
 )
 
 set(STRIDEGEN_HEADERS
@@ -29,6 +30,7 @@ set(STRIDEGEN_HEADERS
   include/stride/stridegen/codeentities.hpp
   include/stride/stridegen/toolmanager.hpp
   include/stride/stridegen/platformpolicymanager.hpp
+  include/stride/stridegen/hardwareresolver.hpp
 )
 
 #find_package(Qt5 5.7.0 REQUIRED COMPONENTS

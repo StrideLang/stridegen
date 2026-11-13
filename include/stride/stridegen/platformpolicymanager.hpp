@@ -89,10 +89,6 @@ private:
 
   void parsePolicyBindings(const std::shared_ptr<DeclarationNode> &decl,
                            const std::string &propertyName);
-  std::shared_ptr<DeclarationNode>
-  loadDeviceDeclaration(const std::string &strideroot,
-                        const std::string &platformName,
-                        const std::string &deviceName);
 };
 
 } // namespace strd
