@@ -110,6 +110,7 @@ void CodeResolver::process() {
 
   // Insert objects
   ASTFunctions::insertRequiredObjects(m_tree, m_system->getImportTrees());
+  overlayFrameworkDataTypes();
   ASTFunctions::fillDefaultProperties(m_tree);
   ASTFunctions::processAnoymousDeclarations(m_tree);
 
@@ -127,6 +128,7 @@ void CodeResolver::process() {
 
   // Do another pass to resolve new node dependencies and structure
   ASTFunctions::insertRequiredObjects(m_tree, m_system->getImportTrees());
+  overlayFrameworkDataTypes();
   ASTFunctions::fillDefaultProperties(m_tree);
   ASTFunctions::processAnoymousDeclarations(m_tree);
   expandValueRanges(); // For declarations inserted by the pass above
@@ -2449,6 +2451,62 @@ CodeResolver::findTypeClass(std::string name, std::string framework) {
     }
   }
   return typeClass;
+}
+
+void CodeResolver::overlayFrameworkDataTypes() {
+  auto isDataType = [](const std::shared_ptr<DeclarationNode> &decl) {
+    return decl->getEntityType() == "frameworkDataType" ||
+           decl->getEntityType() == "alias";
+  };
+  // Framework members carry a "framework" property holding the framework's
+  // root namespace, which is often empty. Library members have none.
+  auto hasFramework = [](const std::shared_ptr<DeclarationNode> &decl) {
+    return decl->getCompilerProperty("framework") != nullptr;
+  };
+
+  std::map<std::string, std::shared_ptr<DeclarationNode>> frameworkTypes;
+  for (const auto &objectsPair : m_system->getImportTrees()) {
+    for (const auto &node : objectsPair.second) {
+      if (node->getNodeType() != AST::Declaration) {
+        continue;
+      }
+      auto decl = std::static_pointer_cast<DeclarationNode>(node);
+      if (isDataType(decl) && hasFramework(decl)) {
+        frameworkTypes.emplace(decl->getName(), decl);
+      }
+    }
+  }
+  if (frameworkTypes.empty()) {
+    return;
+  }
+
+  auto children = m_tree->getChildren();
+  bool changed = false;
+  std::set<std::string> present;
+  for (auto &child : children) {
+    if (child->getNodeType() != AST::Declaration) {
+      continue;
+    }
+    auto decl = std::static_pointer_cast<DeclarationNode>(child);
+    if (!isDataType(decl)) {
+      continue;
+    }
+    if (!hasFramework(decl)) {
+      auto it = frameworkTypes.find(decl->getName());
+      if (it != frameworkTypes.end() && !present.count(decl->getName())) {
+        child = it->second;
+        changed = true;
+      }
+    }
+    present.insert(decl->getName());
+  }
+  if (!changed) {
+    return;
+  }
+  m_tree->setChildren(children);
+  // An overlaid alias can name a type the tree doesn't have yet (Int16 for
+  // AVR's Int).
+  ASTFunctions::insertRequiredObjects(m_tree, m_system->getImportTrees());
 }
 
 void CodeResolver::storeDeclarations() {

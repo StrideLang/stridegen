@@ -216,6 +216,10 @@ private:
   getDataTypeClass(std::shared_ptr<DeclarationNode> decl);
   std::shared_ptr<DeclarationNode> findTypeClass(std::string name,
                                                  std::string framework);
+  // Replaces the library's dummy data types in the tree (alias Real {
+  // entity: Float64 }, ...) with the system framework's own declarations of
+  // the same name, so e.g. Real is Float32 for the AVR framework.
+  void overlayFrameworkDataTypes();
   void setDeclarationType(std::shared_ptr<DeclarationNode> decl, ASTNode type);
   void setPortAttributesForEntity(std::shared_ptr<DeclarationNode> blockDecl,
                                  std::string portName);
