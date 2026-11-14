@@ -2019,8 +2019,11 @@ std::vector<ASTNode> CodeAnalysis::getInputDataTypes(ASTNode node,
       }
     } else {
       std::cerr << __FILE__ << ":" << __LINE__
-                << " Could not find node declaration for "
-                << entityNode->getName() << std::endl;
+                << " Could not find node declaration for ";
+      for (const auto &segment : entityNode->getNamespaceList()) {
+        std::cerr << segment << "::";
+      }
+      std::cerr << entityNode->getName() << std::endl;
     }
   } else if (node->getNodeType() == AST::Array) {
     auto arrayNode = std::static_pointer_cast<ArrayNode>(node);
@@ -2144,8 +2147,11 @@ std::vector<ASTNode> CodeAnalysis::getOutputDataTypes(ASTNode node,
       }
     } else {
       std::cerr << __FILE__ << ":" << __LINE__
-                << " Could not find node declaration for "
-                << entityNode->getName() << std::endl;
+                << " Could not find node declaration for ";
+      for (const auto &segment : entityNode->getNamespaceList()) {
+        std::cerr << segment << "::";
+      }
+      std::cerr << entityNode->getName() << std::endl;
     }
   } else if (node->getNodeType() == AST::Array) {
     auto arrayNode = std::static_pointer_cast<ArrayNode>(node);
@@ -3208,8 +3214,12 @@ void CodeAnalysis::processStreamNode(ASTNode streamNode,
     }
   } else if (streamNode->getNodeType() == AST::Expression) {
     auto exprNode = std::static_pointer_cast<ExpressionNode>(streamNode);
-    processStreamNode(exprNode->getLeft(), scope, tree, typeTree);
-    processStreamNode(exprNode->getRight(), scope, tree, typeTree);
+    if (exprNode->isUnary()) {
+      processStreamNode(exprNode->getValue(), scope, tree, typeTree);
+    } else {
+      processStreamNode(exprNode->getLeft(), scope, tree, typeTree);
+      processStreamNode(exprNode->getRight(), scope, tree, typeTree);
+    }
   } else if (streamNode->getNodeType() == AST::MemberAccess) {
     if (scope.size() == 0) {
       std::cerr << __FILE__ << ":" << __LINE__
