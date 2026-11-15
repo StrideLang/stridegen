@@ -209,9 +209,9 @@ void FeatureResolver::processForceDirectives() {
           } else if (cond->getNodeType() == AST::Expression) {
             auto expr = std::static_pointer_cast<ExpressionNode>(cond);
             if (expr->getExpressionType() == ExpressionNode::LogicalNot &&
-                expr->getLeft() &&
-                expr->getLeft()->getNodeType() == AST::Entity) {
-              std::string name = std::static_pointer_cast<EntityNode>(expr->getLeft())->getName();
+                expr->getValue() &&
+                expr->getValue()->getNodeType() == AST::Entity) {
+              std::string name = std::static_pointer_cast<EntityNode>(expr->getValue())->getName();
               m_disabledFeatures.insert(name);
               m_activeFeatures.erase(name);
             }
@@ -337,7 +337,7 @@ bool FeatureResolver::isConditionMet(ASTNode cond,
     auto expr = std::static_pointer_cast<ExpressionNode>(cond);
     switch (expr->getExpressionType()) {
     case ExpressionNode::LogicalNot:
-      return !isConditionMet(expr->getLeft(), config);
+      return !isConditionMet(expr->getValue(), config);
     case ExpressionNode::And:
       return isConditionMet(expr->getLeft(), config) &&
              isConditionMet(expr->getRight(), config);
@@ -402,7 +402,7 @@ bool FeatureResolver::evaluateCondition(ASTNode cond,
     auto expr = std::static_pointer_cast<ExpressionNode>(cond);
     switch (expr->getExpressionType()) {
     case ExpressionNode::LogicalNot:
-      return !evaluateCondition(expr->getLeft(), currentFile, line);
+      return !evaluateCondition(expr->getValue(), currentFile, line);
     case ExpressionNode::And:
       return evaluateCondition(expr->getLeft(), currentFile, line) &&
              evaluateCondition(expr->getRight(), currentFile, line);

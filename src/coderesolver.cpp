@@ -502,7 +502,16 @@ void CodeResolver::resolveStreamRatesReverse(std::shared_ptr<StreamNode> stream,
     rightRate = CodeAnalysis::getNodeRate(right, scope, tree);
   }
   if (rate < 0 && rightRate >= 0) {
-    CodeResolver::setNodeRate(left, rightRate, scope, tree);
+    ASTNode rightTarget =
+        (right->getNodeType() == AST::Stream)
+            ? static_cast<StreamNode *>(right.get())->getLeft()
+            : right;
+    std::string leftDom = CodeAnalysis::getNodeDomainName(left, scope, m_tree);
+    std::string rightDom =
+        CodeAnalysis::getNodeDomainName(rightTarget, scope, m_tree);
+    if (leftDom.empty() || rightDom.empty() || leftDom == rightDom) {
+      CodeResolver::setNodeRate(left, rightRate, scope, tree);
+    }
   }
 }
 
@@ -556,7 +565,17 @@ void CodeResolver::resolveStreamRates(std::shared_ptr<StreamNode> stream,
     ASTNode rightLeft = static_cast<StreamNode *>(right.get())->getLeft();
     rightRate = CodeAnalysis::getNodeRate(rightLeft, scope, m_tree);
     if (rightRate < 0 && rate >= 0) {
-      CodeResolver::setNodeRate(rightLeft, rate, scope, m_tree);
+      std::string leftDom = CodeAnalysis::getNodeDomainName(left, scope, m_tree);
+      std::string rightDom =
+          CodeAnalysis::getNodeDomainName(rightLeft, scope, m_tree);
+      if (leftDom.empty() || rightDom.empty() || leftDom == rightDom) {
+        CodeResolver::setNodeRate(rightLeft, rate, scope, m_tree);
+      } else if (fallbackToDomainDefault) {
+        double defaultRate = resolveDefaultDomainRate(rightLeft);
+        if (defaultRate > 0) {
+          CodeResolver::setNodeRate(rightLeft, defaultRate, scope, m_tree);
+        }
+      }
     }
     resolveStreamRates(std::static_pointer_cast<StreamNode>(right), scope, tree,
                        fallbackToDomainDefault);
@@ -564,7 +583,18 @@ void CodeResolver::resolveStreamRates(std::shared_ptr<StreamNode> stream,
     rightRate = CodeAnalysis::getNodeRate(right, scope, m_tree);
     if (rightRate < 0) {
       if (rate >= 0) {
-        CodeResolver::setNodeRate(right, rate, scope, m_tree);
+        std::string leftDom =
+            CodeAnalysis::getNodeDomainName(left, scope, m_tree);
+        std::string rightDom =
+            CodeAnalysis::getNodeDomainName(right, scope, m_tree);
+        if (leftDom.empty() || rightDom.empty() || leftDom == rightDom) {
+          CodeResolver::setNodeRate(right, rate, scope, m_tree);
+        } else if (fallbackToDomainDefault) {
+          double defaultRate = resolveDefaultDomainRate(right);
+          if (defaultRate > 0) {
+            CodeResolver::setNodeRate(right, defaultRate, scope, m_tree);
+          }
+        }
       } else if (fallbackToDomainDefault) {
         double defaultRate = resolveDefaultDomainRate(right);
         if (defaultRate > 0) {
@@ -2583,6 +2613,7 @@ void CodeResolver::analyzeContainerStreamDependencies(
     std::set<std::string> writes;
     double rate = -1.0;
     int64_t rank = 0;
+    bool isSubdomainCall = false;
     std::set<size_t> dependencies;
     std::set<size_t> dependents;
   };
@@ -2606,6 +2637,10 @@ void CodeResolver::analyzeContainerStreamDependencies(
 
       if (node->getNodeType() == AST::Function) {
         auto funcNode = std::static_pointer_cast<FunctionNode>(node);
+        auto funcDecl = ASTQuery::findDeclarationForNode(funcNode, scope, m_tree);
+        if (funcDecl && funcDecl->getEntityType() == "_domainDefinition") {
+          info.isSubdomainCall = true;
+        }
         for (const auto &prop : funcNode->getProperties()) {
           if (prop && prop->getValue()) {
             collectEntityNames(prop->getValue(), nodeNames);
@@ -2660,7 +2695,8 @@ void CodeResolver::analyzeContainerStreamDependencies(
 
   for (size_t j = 0; j < streamInfos.size(); j++) {
     for (size_t i = 0; i < j; i++) {
-      bool hasDep = false;
+      bool hasDep = streamInfos[i].isSubdomainCall ||
+                    streamInfos[j].isSubdomainCall;
       for (const auto &w : streamInfos[i].writes) {
         if (streamInfos[j].reads.count(w) && !isPersistent(w)) {
           hasDep = true;
@@ -2830,6 +2866,15 @@ void CodeResolver::analyzeStreamDependencies() {
           CodeAnalysis::getNodeDomainName(stream, scope, m_tree);
       if (domName.empty()) {
         domName = "RootDomain";
+      }
+      if (stream->getRight()) {
+        std::string rightDom =
+            CodeAnalysis::getNodeDomainName(stream->getRight(), scope, m_tree);
+        if (!rightDom.empty() && rightDom != domName &&
+            !CodeAnalysis::getCommonAncestorDomain(domName, rightDom, m_tree)
+                 .empty()) {
+          domName = rightDom;
+        }
       }
       domainStreams[domName].push_back(stream);
     }
@@ -3401,7 +3446,13 @@ void CodeResolver::setNodeRate(ASTNode node, double rate, ScopeStack scope,
     for (const ASTNode &element : node->getChildren()) {
       double elementRate = CodeAnalysis::getNodeRate(element, scope, tree);
       if (elementRate < 0.0) {
-        CodeResolver::setNodeRate(element, rate, scope, tree);
+        std::string nodeDom =
+            CodeAnalysis::getNodeDomainName(node, scope, m_tree);
+        std::string elemDom =
+            CodeAnalysis::getNodeDomainName(element, scope, m_tree);
+        if (nodeDom.empty() || elemDom.empty() || nodeDom == elemDom) {
+          CodeResolver::setNodeRate(element, rate, scope, tree);
+        }
       }
     }
   }

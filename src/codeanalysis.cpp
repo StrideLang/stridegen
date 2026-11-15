@@ -104,7 +104,9 @@ ASTNode CodeAnalysis::getInstance(ASTNode block, ScopeStack scopeStack,
                              scopeStack, tree)) {
       inst = block;
     } else if (std::static_pointer_cast<DeclarationNode>(block)
-                   ->getEntityType() == "reaction") {
+                   ->getEntityType() == "reaction" ||
+               std::static_pointer_cast<DeclarationNode>(block)
+                   ->getEntityType() == "_domainDefinition") {
       inst = block;
     } else {
       std::cout << __FILE__ << ":" << __LINE__
@@ -362,6 +364,11 @@ ASTNode CodeAnalysis::getNodeDomain(ASTNode node, ScopeStack scopeStack,
         } else if (funcDecl->getEntityType() == "reaction") {
           // reactions currently belong to a single domain.
           domainNode = funcDecl->getPropertyValue("domain");
+        } else if (funcDecl->getEntityType() == "_domainDefinition") {
+          auto parentDomain = funcDecl->getPropertyValue("parentDomain");
+          if (parentDomain && parentDomain->getNodeType() != AST::None) {
+            domainNode = parentDomain->deepCopy();
+          }
         }
       }
     }
@@ -598,6 +605,16 @@ double CodeAnalysis::getNodeRate(ASTNode node, ScopeStack scope, ASTNode tree) {
              node->getNodeType() == AST::Expression) {
     double rate = -1.0;
     for (const ASTNode &element : node->getChildren()) {
+      if (auto samplingDom = node->getCompilerProperty("samplingDomain")) {
+        std::string exprDomName =
+            CodeAnalysis::getDomainIdentifier(samplingDom, scope, tree);
+        std::string elemDomName =
+            CodeAnalysis::getNodeDomainName(element, scope, tree);
+        if (!exprDomName.empty() && !elemDomName.empty() &&
+            exprDomName != elemDomName) {
+          continue;
+        }
+      }
       double elementRate = CodeAnalysis::getNodeRate(element, scope, tree);
       if (elementRate != -1.0) {
         if (rate != elementRate) {
@@ -1523,6 +1540,8 @@ int CodeAnalysis::getNodeNumOutputs(ASTNode node, const ScopeStack &scope,
         portProp->getPropertyName() == "rate" ||
         portProp->getPropertyName() == "domain") {
       return CodeAnalysis::SIZE_MEMBER_ACCESS;
+    } else if (portProp->getPropertyName() == "status") {
+      return 1; // a domain's or a variable's status word
     } else {
       std::cerr
           << "Unknown member access in getNodeNumOutputs() setting size to 1"
@@ -1573,8 +1592,9 @@ int CodeAnalysis::getNodeNumInputs(ASTNode node, ScopeStack scope, ASTNode tree,
     }
     int dataSize = CodeAnalysis::getFunctionDataSize(func, scope, tree, errors);
     if (platformFunc) {
-      if (platformFunc->getEntityType() == "reaction") {
-        return 1; // Reactions always have one input as main port for trigger
+      if (platformFunc->getEntityType() == "reaction" ||
+          platformFunc->getEntityType() == "_domainDefinition") {
+        return 1; // Reactions and domains always have one input as main port for trigger
       } else {
         auto subScope = ASTQuery::getModuleEntities(platformFunc);
         scope.push_back({func, subScope});
@@ -2008,6 +2028,7 @@ std::vector<ASTNode> CodeAnalysis::getInputDataTypes(ASTNode node,
       if (decl->getEntityType() == "switch" ||
           decl->getEntityType() == "trigger" ||
           decl->getEntityType() == "string" ||
+          decl->getEntityType() == "buffer" ||
           ASTQuery::isConstant(decl, scope, tree)) {
         // Builtin data type, or the type of a constant's value
         return {std::make_shared<EntityNode>(
@@ -3222,9 +3243,14 @@ void CodeAnalysis::processStreamNode(ASTNode streamNode,
     }
   } else if (streamNode->getNodeType() == AST::MemberAccess) {
     if (scope.size() == 0) {
-      std::cerr << __FILE__ << ":" << __LINE__
-                << " Error: member access in root scope: "
-                << streamNode->toText() << std::endl;
+      // A member of a domain or a variable (RootDomain.status, Title.status,
+      // Buf.ready) is state the generator adds beside its owner
+      auto member = std::static_pointer_cast<MemberAccessNode>(streamNode);
+      if (!ASTQuery::findDeclarationByName(member->getEntity(), scope, tree)) {
+        std::cerr << __FILE__ << ":" << __LINE__
+                  << " Error: member access in root scope: "
+                  << streamNode->toText() << std::endl;
+      }
       return;
     }
     typeTree.external.push_back({streamNode, DataTypes::Int});

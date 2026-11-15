@@ -1094,7 +1094,11 @@ void StrideSystem::generateDomainConnections(ASTNode tree) {
               nodeDecl = ASTQuery::findDeclarationByName(
                   ASTQuery::getNodeName(stream->getRight()), {}, tree, {});
             }
-            stream->getRight()->setCompilerProperty("declaration", nodeDecl);
+            // A connection may name an entity no file declares (it is the
+            // framework's); a property cannot hold a null value.
+            if (nodeDecl) {
+              stream->getRight()->setCompilerProperty("declaration", nodeDecl);
+            }
             stream->getRight()->setCompilerProperty(
                 "domain", std::make_shared<EntityNode>(previousDomainId,
                                                        __FILE__, __LINE__));
@@ -1126,7 +1130,9 @@ void StrideSystem::generateDomainConnections(ASTNode tree) {
               nodeDecl = ASTQuery::findDeclarationByName(
                   ASTQuery::getNodeName(connectionNode), {}, tree, {});
             }
-            connectionNode->setCompilerProperty("declaration", nodeDecl);
+            if (nodeDecl) {
+              connectionNode->setCompilerProperty("declaration", nodeDecl);
+            }
             connectionNode->setCompilerProperty(
                 "domain", std::make_shared<EntityNode>(nextDomainId, __FILE__,
                                                        __LINE__));
