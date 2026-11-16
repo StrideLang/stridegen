@@ -407,7 +407,8 @@ std::string LanguageSyntax::getDataType(std::shared_ptr<DeclarationNode> decl,
   static const std::map<std::string, std::string> builtinDataTypes = {
       {"string", DataTypes::String},
       {"trigger", DataTypes::Switch},
-      {"iterator", DataTypes::Int}};
+      {"iterator", DataTypes::Int},
+      {"sequence", DataTypes::Int}};
   std::string defaultDataType;
   auto builtinDataType = builtinDataTypes.find(decl->getEntityType());
   if (builtinDataType != builtinDataTypes.end()) {

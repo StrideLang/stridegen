@@ -23,6 +23,7 @@
 */
 
 #include "stride/stridegen/codevalidator.hpp"
+#include "stride/utils/astfunctions.h"
 #include "stride/stridegen/codeanalysis.hpp"
 #include "stride/parser/memberaccessnode.h"
 #include "stride/stridegen/stridesystem.hpp"
@@ -889,6 +890,192 @@ void CodeValidator::validate() {
     }
     for (const auto &error : findInvalidCrossDomainAccess(m_tree)) {
       m_errors.push_back(error);
+    }
+    // Validate that multiple array-bound iterators in a loop have equal trip counts
+    {
+      auto validateLoopDeclIterators =
+          [&](std::shared_ptr<DeclarationNode> decl,
+              std::shared_ptr<FunctionNode> callFunc) {
+            auto blocks = decl->getPropertyValue("entities");
+            if (!blocks || blocks->getNodeType() != AST::List)
+              return;
+            ScopeStack loopScope = {{decl, blocks->getChildren()}};
+            const std::string inPort = mainPortName(decl, "mainInputPort");
+            const std::string outPort = mainPortName(decl, "mainOutputPort");
+            std::string inPortEntity, outPortEntity;
+            if (auto ports = decl->getPropertyValue("ports")) {
+              for (const auto &p : ports->getChildren()) {
+                if (p->getNodeType() == AST::Declaration) {
+                  auto pd = std::static_pointer_cast<DeclarationNode>(p);
+                  if (pd->getEntityType() == "mainInputPort") {
+                    if (auto pb = pd->getPropertyValue("entity"))
+                      inPortEntity = ASTQuery::getNodeName(pb);
+                  } else if (pd->getEntityType() == "mainOutputPort") {
+                    if (auto pb = pd->getPropertyValue("entity"))
+                      outPortEntity = ASTQuery::getNodeName(pb);
+                  }
+                }
+              }
+            }
+            int64_t expectedTrips = -1;
+            bool usedCallSitePort = false;
+            for (const auto &child : blocks->getChildren()) {
+              if (child->getNodeType() != AST::Declaration)
+                continue;
+              auto itDecl = std::static_pointer_cast<DeclarationNode>(child);
+              if (itDecl->getEntityType() != "iterator")
+                continue;
+              auto entityProp = itDecl->getPropertyValue("entity");
+              if (!entityProp || entityProp->getNodeType() == AST::None)
+                continue;
+              auto targetDecl = ASTQuery::findDeclarationForNode(
+                  entityProp, loopScope, m_tree);
+              if (!targetDecl)
+                continue;
+              int64_t entitySize = -1;
+              if (targetDecl->getNodeType() == AST::ArrayDeclaration) {
+                std::vector<LangError> szErrors;
+                int sz = ASTQuery::getEntityDeclaredSize(targetDecl, loopScope,
+                                                         m_tree, &szErrors);
+                if (szErrors.empty() && sz > 0) {
+                  entitySize = sz;
+                } else if (callFunc) {
+                  auto arrIdx = targetDecl->getArrayIndex();
+                  if (arrIdx && arrIdx->index() &&
+                      !arrIdx->index()->getChildren().empty()) {
+                    auto idxNode = arrIdx->index()->getChildren()[0];
+                    if (idxNode && idxNode->getNodeType() == AST::MemberAccess) {
+                      auto ma =
+                          std::static_pointer_cast<MemberAccessNode>(idxNode);
+                      if (ma->getPropertyName() == "size") {
+                        if ((!inPort.empty() && ma->getEntity() == inPort) ||
+                            (!inPortEntity.empty() &&
+                             ma->getEntity() == inPortEntity)) {
+                          if (auto inBlk =
+                                  callFunc->getCompilerProperty("inputEntity")) {
+                            int inSz = CodeAnalysis::getNodeNumOutputs(
+                                inBlk, {}, m_tree, nullptr);
+                            if (inSz > 0) {
+                              entitySize = inSz;
+                              usedCallSitePort = true;
+                            }
+                          }
+                        } else if ((!outPort.empty() &&
+                                    ma->getEntity() == outPort) ||
+                                   (!outPortEntity.empty() &&
+                                    ma->getEntity() == outPortEntity)) {
+                          if (auto outBlk = callFunc->getCompilerProperty(
+                                  "outputEntity")) {
+                            int outSz = CodeAnalysis::getNodeNumInputs(
+                                outBlk, {}, m_tree, nullptr);
+                            if (outSz > 0) {
+                              entitySize = outSz;
+                              usedCallSitePort = true;
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              } else if (targetDecl->getEntityType() == "buffer") {
+                int sz = CodeAnalysis::getTypeNumOutputs(targetDecl, loopScope,
+                                                         m_tree, nullptr);
+                if (sz > 0) {
+                  entitySize = sz;
+                }
+              }
+              if (entitySize <= 0)
+                continue;
+              int64_t offsetVal = 0;
+              if (auto offProp = itDecl->getPropertyValue("offset")) {
+                if (offProp->getNodeType() != AST::None) {
+                  std::vector<LangError> evalErrs;
+                  int64_t v = ASTFunctions::evaluateConstInteger(
+                      offProp, loopScope, m_tree, &evalErrs);
+                  if (!evalErrs.empty())
+                    continue;
+                  offsetVal = v;
+                }
+              }
+              int64_t strideVal = 1;
+              if (auto strProp = itDecl->getPropertyValue("stride")) {
+                if (strProp->getNodeType() != AST::None) {
+                  std::vector<LangError> evalErrs;
+                  int64_t v = ASTFunctions::evaluateConstInteger(
+                      strProp, loopScope, m_tree, &evalErrs);
+                  if (!evalErrs.empty() || v <= 0)
+                    continue;
+                  strideVal = v;
+                }
+              }
+              int64_t trips =
+                  (entitySize > offsetVal)
+                      ? (entitySize - offsetVal + strideVal - 1) / strideVal
+                      : 0;
+              if (expectedTrips < 0) {
+                expectedTrips = trips;
+              } else if (trips != expectedTrips &&
+                         (!callFunc || usedCallSitePort)) {
+                LangError error;
+                error.type = LangError::ArraySizeMismatch;
+                if (callFunc) {
+                  callFunc->copyLocationTo(error);
+                } else {
+                  itDecl->copyLocationTo(error);
+                }
+                error.errorTokens.push_back(itDecl->getName());
+                error.errorTokens.push_back(std::to_string(expectedTrips));
+                error.errorTokens.push_back(std::to_string(trips));
+                m_errors.push_back(error);
+              }
+            }
+          };
+      std::function<void(const ASTNode &)> checkLoopIterators =
+          [&](const ASTNode &node) {
+            if (!node)
+              return;
+            if (node->getNodeType() == AST::Declaration) {
+              auto decl = std::static_pointer_cast<DeclarationNode>(node);
+              if (decl->getEntityType() == "loop") {
+                validateLoopDeclIterators(decl, nullptr);
+              }
+              if (auto blocks = decl->getPropertyValue("entities")) {
+                for (const auto &b : blocks->getChildren()) {
+                  checkLoopIterators(b);
+                }
+              }
+              if (auto streams = decl->getPropertyValue("streams")) {
+                for (const auto &s : streams->getChildren()) {
+                  checkLoopIterators(s);
+                }
+              }
+              return;
+            }
+            if (node->getNodeType() == AST::Function) {
+              auto func = std::static_pointer_cast<FunctionNode>(node);
+              auto decl = ASTQuery::findDeclarationForNode(func, {}, m_tree);
+              if (decl && decl->getEntityType() == "loop") {
+                validateLoopDeclIterators(decl, func);
+              }
+              for (const auto &prop : func->getProperties()) {
+                if (prop && prop->getValue()) {
+                  checkLoopIterators(prop->getValue());
+                }
+              }
+              return;
+            }
+            if (node->getNodeType() == AST::Stream) {
+              auto stream = std::static_pointer_cast<StreamNode>(node);
+              checkLoopIterators(stream->getLeft());
+              checkLoopIterators(stream->getRight());
+              return;
+            }
+            for (const auto &child : node->getChildren()) {
+              checkLoopIterators(child);
+            }
+          };
+      checkLoopIterators(m_tree);
     }
     for (const auto &error : findInvalidConnectionProperties(m_tree)) {
       m_errors.push_back(error);

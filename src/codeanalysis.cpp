@@ -100,6 +100,10 @@ ASTNode CodeAnalysis::getInstance(ASTNode block, ScopeStack scopeStack,
             "trigger" ||
         std::static_pointer_cast<DeclarationNode>(block)->getEntityType() ==
             "string" ||
+        std::static_pointer_cast<DeclarationNode>(block)->getEntityType() ==
+            "iterator" ||
+        std::static_pointer_cast<DeclarationNode>(block)->getEntityType() ==
+            "sequence" ||
         ASTQuery::isConstant(std::static_pointer_cast<DeclarationNode>(block),
                              scopeStack, tree)) {
       inst = block;
@@ -1080,8 +1084,9 @@ int CodeAnalysis::evaluateSizeMemberAccess(
       if (port->getNodeType() == AST::Declaration) {
         auto portDecl = std::static_pointer_cast<DeclarationNode>(port);
         auto portName = portDecl->getName();
-        if (portName == targetPortName) {
-          auto portBlock = portDecl->getPropertyValue("entity");
+        auto portBlock = portDecl->getPropertyValue("entity");
+        if (portName == targetPortName ||
+            (portBlock && ASTQuery::getNodeName(portBlock) == targetPortName)) {
           auto portNameNode = portDecl->getPropertyValue("name");
           std::string portName;
 
@@ -1161,6 +1166,29 @@ int CodeAnalysis::evaluateSizeMemberAccess(
           } else {
             std::cerr << "Unexpected port block entry" << std::endl;
           }
+        }
+      }
+    }
+  }
+  if (portSize == 0) {
+    ScopeStack lookupScope = scopeStack;
+    if (decl && blocksNode && blocksNode->getNodeType() == AST::List) {
+      lookupScope.push_back({decl, blocksNode->getChildren()});
+    }
+    if (auto targetDecl =
+            ASTQuery::findDeclarationByName(targetPortName, lookupScope, tree)) {
+      if (targetDecl->getNodeType() == AST::ArrayDeclaration) {
+        std::vector<LangError> errs;
+        int sz = ASTQuery::getEntityDeclaredSize(targetDecl, lookupScope, tree,
+                                                 &errs);
+        if (errs.empty() && sz > 0) {
+          portSize = sz;
+        }
+      } else if (targetDecl->getEntityType() == "buffer") {
+        int sz =
+            CodeAnalysis::getTypeNumOutputs(targetDecl, lookupScope, tree, nullptr);
+        if (sz > 0) {
+          portSize = sz;
         }
       }
     }
@@ -1347,31 +1375,58 @@ CodeAnalysis::getUsedMemberAccesses(std::shared_ptr<DeclarationNode> funcDecl) {
     }
   }
 
-  // A block sized by a port property (`Input[InputPort.size]`) uses it too:
-  // calls inside the function that take the block need the size at run time
+  // An entity sized by a port property (`Input[InputPort.size]`) or an
+  // iterator/sequence property referencing a port property (`InputPort.size`)
+  // uses it too: calls inside the function need the size at run time.
+  auto addUniqueAccess = [&](const std::shared_ptr<MemberAccessNode> &access) {
+    bool known = std::any_of(used.begin(), used.end(), [&](const auto &u) {
+      return u->getEntity() == access->getEntity() &&
+             u->getPropertyName() == access->getPropertyName();
+    });
+    if (!known) {
+      used.push_back(access);
+    }
+  };
   if (blocksNode) {
     for (const auto &node : blocksNode->getChildren()) {
-      if (node->getNodeType() != AST::ArrayDeclaration) {
-        continue;
+      if (node->getNodeType() == AST::ArrayDeclaration) {
+        auto index =
+            std::static_pointer_cast<DeclarationNode>(node)->getArrayIndex();
+        if (index) {
+          for (const auto &access : getUsedMemberAccessesInNode(index)) {
+            addUniqueAccess(access);
+          }
+        }
       }
-      auto index =
-          std::static_pointer_cast<DeclarationNode>(node)->getArrayIndex();
-      if (!index) {
-        continue;
-      }
-      for (const auto &access : getUsedMemberAccessesInNode(index)) {
-        bool known = std::any_of(used.begin(), used.end(), [&](const auto &u) {
-          return u->getEntity() == access->getEntity() &&
-                 u->getPropertyName() == access->getPropertyName();
-        });
-        if (!known) {
-          used.push_back(access);
+      if (node->getNodeType() == AST::Declaration) {
+        auto decl = std::static_pointer_cast<DeclarationNode>(node);
+        if (decl->getEntityType() == "iterator" ||
+            decl->getEntityType() == "sequence") {
+          for (const auto &prop : decl->getProperties()) {
+            if (prop && prop->getValue() && prop->getName() != "domain" &&
+                prop->getName() != "type") {
+              for (const auto &access :
+                   getUsedMemberAccessesInNode(prop->getValue())) {
+                addUniqueAccess(access);
+              }
+            }
+          }
         }
       }
     }
   }
 
-  return used;
+  std::vector<std::shared_ptr<MemberAccessNode>> deduped;
+  for (const auto &access : used) {
+    bool known = std::any_of(deduped.begin(), deduped.end(), [&](const auto &u) {
+      return u->getEntity() == access->getEntity() &&
+             u->getPropertyName() == access->getPropertyName();
+    });
+    if (!known) {
+      deduped.push_back(access);
+    }
+  }
+  return deduped;
 }
 
 std::vector<std::shared_ptr<MemberAccessNode>>
@@ -1434,6 +1489,33 @@ std::vector<ASTNode> CodeAnalysis::getUsedEntitiesInStreams(
         ASTNode node = it.next();
         auto newUsed = getUsedEntitiesInNode(node);
         used.insert(used.end(), newUsed.begin(), newUsed.end());
+      }
+    }
+  }
+  auto blocksNode = funcDecl->getPropertyValue("entities");
+  if (blocksNode && blocksNode->getNodeType() == AST::List) {
+    for (const auto &block : blocksNode->getChildren()) {
+      if (block->getNodeType() == AST::Declaration) {
+        auto decl = std::static_pointer_cast<DeclarationNode>(block);
+        if (decl->getEntityType() == "iterator" ||
+            decl->getEntityType() == "sequence") {
+          used.push_back(std::make_shared<EntityNode>(
+              decl->getName(), decl->getFilename().c_str(), decl->getLine()));
+          for (const auto &prop : decl->getProperties()) {
+            if (!prop || !prop->getValue()) {
+              continue;
+            }
+            const auto &propName = prop->getName();
+            if (propName == "domain" || propName == "type" ||
+                propName == "inherits" || propName == "meta" ||
+                propName == "ports" || propName == "rate" ||
+                propName == "inputName" || propName == "outputName") {
+              continue;
+            }
+            auto newUsed = getUsedEntitiesInNode(prop->getValue());
+            used.insert(used.end(), newUsed.begin(), newUsed.end());
+          }
+        }
       }
     }
   }
@@ -1658,7 +1740,8 @@ int CodeAnalysis::getTypeNumOutputs(
     return ASTQuery::getEntityDeclaredSize(blockDeclaration, scope, tree,
                                            errors);
   } else if (blockDeclaration->getNodeType() == AST::Declaration) {
-    if (blockDeclaration->getEntityType() == "module") {
+    if (blockDeclaration->getEntityType() == "module" ||
+        blockDeclaration->getEntityType() == "loop") {
       std::shared_ptr<DeclarationNode> portBlock =
           ASTQuery::getModuleMainOutputPort(blockDeclaration);
 
@@ -2025,10 +2108,27 @@ std::vector<ASTNode> CodeAnalysis::getInputDataTypes(ASTNode node,
         // from all declarations that inherit from "Typed"
         return {getDataTypeForSignalDeclaration(decl)};
       }
+      if (decl->getEntityType() == "iterator") {
+        auto entityProp = decl->getPropertyValue("entity");
+        if (entityProp && entityProp->getNodeType() != AST::None) {
+          auto targetDecl = std::static_pointer_cast<DeclarationNode>(
+              entityProp->getCompilerProperty("declaration"));
+          if (!targetDecl) {
+            targetDecl =
+                ASTQuery::findDeclarationForNode(entityProp, scope, tree);
+          }
+          if (targetDecl && targetDecl->getEntityType() == "signal") {
+            return {getDataTypeForSignalDeclaration(targetDecl)};
+          }
+        }
+        return {std::make_shared<EntityNode>(
+            getDataTypeForDeclaration(decl, scope, tree), __FILE__, __LINE__)};
+      }
       if (decl->getEntityType() == "switch" ||
           decl->getEntityType() == "trigger" ||
           decl->getEntityType() == "string" ||
           decl->getEntityType() == "buffer" ||
+          decl->getEntityType() == "sequence" ||
           ASTQuery::isConstant(decl, scope, tree)) {
         // Builtin data type, or the type of a constant's value
         return {std::make_shared<EntityNode>(
@@ -2158,9 +2258,25 @@ std::vector<ASTNode> CodeAnalysis::getOutputDataTypes(ASTNode node,
       if (decl->getEntityType() == "signal") {
         auto type = getDataTypeForSignalDeclaration(decl);
         return {type};
+      } else if (decl->getEntityType() == "iterator") {
+        auto entityProp = decl->getPropertyValue("entity");
+        if (entityProp && entityProp->getNodeType() != AST::None) {
+          auto targetDecl = std::static_pointer_cast<DeclarationNode>(
+              entityProp->getCompilerProperty("declaration"));
+          if (!targetDecl) {
+            targetDecl =
+                ASTQuery::findDeclarationForNode(entityProp, scope, tree);
+          }
+          if (targetDecl && targetDecl->getEntityType() == "signal") {
+            return {getDataTypeForSignalDeclaration(targetDecl)};
+          }
+        }
+        return {std::make_shared<EntityNode>(
+            getDataTypeForDeclaration(decl, scope, tree), __FILE__, __LINE__)};
       } else if (decl->getEntityType() == "switch" ||
                  decl->getEntityType() == "trigger" ||
                  decl->getEntityType() == "string" ||
+                 decl->getEntityType() == "sequence" ||
                  ASTQuery::isConstant(decl, scope, tree)) {
         // Builtin data type, or a constant's type taken from its value
         return {std::make_shared<EntityNode>(
@@ -2388,6 +2504,43 @@ CodeAnalysis::getDataTypeForDeclaration(std::shared_ptr<DeclarationNode> decl,
   } else if (decl->getEntityType() == "switch" ||
              decl->getEntityType() == "trigger") {
     return DataTypes::Switch;
+  } else if (decl->getEntityType() == "iterator") {
+    auto entityProp = decl->getPropertyValue("entity");
+    if (entityProp && entityProp->getNodeType() != AST::None) {
+      auto targetDecl = std::static_pointer_cast<DeclarationNode>(
+          entityProp->getCompilerProperty("declaration"));
+      if (!targetDecl) {
+        targetDecl = ASTQuery::findDeclarationForNode(entityProp, scope, tree);
+      }
+      if (!targetDecl && tree) {
+        targetDecl = ASTQuery::findDeclarationForNode(entityProp, {}, tree);
+      }
+      if (targetDecl) {
+        return getDataTypeForDeclaration(targetDecl, scope, tree);
+      }
+    }
+    for (const char *propName : {"default", "limit", "increment"}) {
+      auto propVal = decl->getPropertyValue(propName);
+      if (propVal && propVal->getNodeType() != AST::None) {
+        if (propVal->getNodeType() == AST::Real ||
+            resolveNodeOutDataType(propVal, scope, tree) == DataTypes::Real) {
+          return DataTypes::Real;
+        }
+      }
+    }
+    return DataTypes::Int;
+  } else if (decl->getEntityType() == "sequence") {
+    for (const char *propName :
+         {"from", "default", "limit", "step", "increment"}) {
+      auto propVal = decl->getPropertyValue(propName);
+      if (propVal && propVal->getNodeType() != AST::None) {
+        if (propVal->getNodeType() == AST::Real ||
+            resolveNodeOutDataType(propVal, scope, tree) == DataTypes::Real) {
+          return DataTypes::Real;
+        }
+      }
+    }
+    return DataTypes::Int;
   } else {
     //    qDebug() << __FILE__ << ":" << __LINE__ << " ERROR unsupported
     //    object type";
@@ -2434,6 +2587,9 @@ std::string CodeAnalysis::resolveEntityDataType(ASTNode node,
     } else if (declaration->getEntityType() == "switch" ||
                declaration->getEntityType() == "trigger") {
       return DataTypes::Switch;
+    } else if (declaration->getEntityType() == "iterator" ||
+               declaration->getEntityType() == "sequence") {
+      return getDataTypeForDeclaration(declaration, scopeStack, tree);
     } else {
       return "";
     }
@@ -3009,6 +3165,12 @@ CodeAnalysis::NodeRole CodeAnalysis::determineNodeRole(
       auto entityDecl = ASTQuery::findDeclarationForNode(entity, localScope, nullptr);
       if (entityDecl) { // If in local scope it is an internal entity
         outEntityDecl = entityDecl;
+        if (funcDecl->getEntityType() == "loop" ||
+            funcDecl->getEntityType() == "reaction" ||
+            entityDecl->getEntityType() == "iterator" ||
+            entityDecl->getEntityType() == "sequence") {
+          return NodeRole::Internal;
+        }
         auto persistentProp = entityDecl->getCompilerProperty("persistent");
         auto explicitPersistentProp =
             entityDecl->getPropertyValue("persistent");
@@ -3074,6 +3236,27 @@ void CodeAnalysis::processStreamNode(ASTNode streamNode,
             StreamNodeIterator it(stream);
             while (it.hasNext()) {
               processStreamNode(it.next(), funcScope, tree, functionTree);
+            }
+          }
+        }
+        if (blocks && blocks->getNodeType() == AST::List) {
+          for (const auto &blockNode : blocks->getChildren()) {
+            if (blockNode->getNodeType() == AST::Declaration) {
+              auto bDecl = std::static_pointer_cast<DeclarationNode>(blockNode);
+              if (bDecl->getEntityType() == "iterator" ||
+                  bDecl->getEntityType() == "sequence") {
+                processStreamNode(
+                    std::make_shared<EntityNode>(bDecl->getName(),
+                                                 bDecl->getFilename().c_str(),
+                                                 bDecl->getLine()),
+                    funcScope, tree, functionTree);
+                for (const auto &prop : bDecl->getProperties()) {
+                  if (prop && prop->getValue()) {
+                    processStreamNode(prop->getValue(), funcScope, tree,
+                                      functionTree);
+                  }
+                }
+              }
             }
           }
         }
@@ -3423,6 +3606,15 @@ CodeAnalysis::TypeTree CodeAnalysis::getStateStructInformationForDeclaration(
         } else if (role == NodeRole::Output) {
           auto type = getDataTypeForDeclaration(blockDecl, funcScope, tree);
           typeTree.output.push_back({blockDecl, type});
+        }
+        if (blockDecl->getEntityType() == "iterator" ||
+            blockDecl->getEntityType() == "sequence") {
+          for (const auto &prop : blockDecl->getProperties()) {
+            if (prop && prop->getValue()) {
+              processStreamNodeForDeclaration(prop->getValue(), funcDecl,
+                                              funcScope, tree, typeTree);
+            }
+          }
         }
       }
     }

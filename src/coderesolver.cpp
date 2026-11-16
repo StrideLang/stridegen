@@ -2076,6 +2076,21 @@ void CodeResolver::processDomains() {
          ASTQuery::getContainedStreamEntities(decl, {}, m_tree)) {
       streams.insert(streams.end(), block.streams.begin(), block.streams.end());
     }
+    if (auto blocks = decl->getPropertyValue("entities")) {
+      for (const auto &b : blocks->getChildren()) {
+        if (b->getNodeType() == AST::Declaration) {
+          auto bDecl = std::static_pointer_cast<DeclarationNode>(b);
+          if (bDecl->getEntityType() == "iterator" ||
+              bDecl->getEntityType() == "sequence") {
+            for (const auto &prop : bDecl->getProperties()) {
+              if (prop && prop->getValue()) {
+                streams.push_back(prop->getValue());
+              }
+            }
+          }
+        }
+      }
+    }
     applyDomainOfUsedGlobals(decl, streams);
   }
   while (rit != children.rend()) {
@@ -2145,14 +2160,18 @@ void CodeResolver::resolveAttributes(const ScopeStack &scope, ASTNode tree) {
       auto typeDecl = ASTQuery::findTypeDeclaration(decl, {}, m_tree);
       if (ASTQuery::isCodeGenerator(typeDecl, scope, tree)) {
         auto streams = decl->getPropertyValue("streams");
+        auto blocks = decl->getPropertyValue("entities");
+        ScopeStack localScope = scope;
+        if (blocks && blocks->getNodeType() == AST::List) {
+          localScope.push_back({decl, blocks->getChildren()});
+        }
         auto streamsChildren = streams->getChildren();
         auto rit = streamsChildren.rbegin();
         while (rit != streamsChildren.rend()) {
           ASTNode node = *rit;
           if (node->getNodeType() == AST::Stream) {
             resolveStreamTypesReverse(
-                std::static_pointer_cast<StreamNode>(node), {},
-                decl->getPropertyValue("entities"));
+                std::static_pointer_cast<StreamNode>(node), localScope, tree);
           }
           rit++;
         }
@@ -2160,8 +2179,8 @@ void CodeResolver::resolveAttributes(const ScopeStack &scope, ASTNode tree) {
           for (const auto &streamNode : streams->getChildren()) {
             if (streamNode->getNodeType() == AST::Stream) {
               resolveStreamTypesForward(
-                  std::static_pointer_cast<StreamNode>(streamNode), {},
-                  decl->getPropertyValue("entities"));
+                  std::static_pointer_cast<StreamNode>(streamNode), localScope,
+                  tree);
             }
           }
         }
@@ -2556,6 +2575,7 @@ void CodeResolver::analyzeParents() {
 
 void CodeResolver::analyzePersistence() {
   auto scope = ScopeStack();
+  bool rootStreamsAnalyzed = false;
   for (const auto &child : m_tree->getChildren()) {
     if (child && (child->getNodeType() == AST::Declaration ||
                   child->getNodeType() == AST::ArrayDeclaration)) {
@@ -2571,9 +2591,9 @@ void CodeResolver::analyzePersistence() {
         markNodePersistence(streamsList, blocksList, scope, m_tree);
         scope.pop_back();
       }
-    } else if (child && child->getNodeType() == AST::Stream) {
+    } else if (!rootStreamsAnalyzed && child && child->getNodeType() == AST::Stream) {
       markNodePersistence(m_tree, nullptr, scope, m_tree);
-      break;
+      rootStreamsAnalyzed = true;
     }
   }
 }
@@ -4653,7 +4673,9 @@ CodeResolver::applyDomainOfUsedGlobals(std::shared_ptr<DeclarationNode> module,
       }
       auto blockDecl = std::static_pointer_cast<DeclarationNode>(block);
       if ((blockDecl->getEntityType() != "signal" &&
-           blockDecl->getEntityType() != "switch") ||
+           blockDecl->getEntityType() != "switch" &&
+           blockDecl->getEntityType() != "iterator" &&
+           blockDecl->getEntityType() != "sequence") ||
           portBlocks.count(blockDecl->getName())) {
         continue;
       }
@@ -5175,7 +5197,8 @@ void CodeResolver::markConnectionForNode(ASTNode node, ScopeStack scopeStack,
           }
         }
       }
-      if (decl->getEntityType() == "iterator") {
+      if (decl->getEntityType() == "iterator" ||
+          decl->getEntityType() == "sequence") {
         auto doneTrigger = decl->getPropertyValue("done");
         if (doneTrigger) {
           auto doneTriggerDecl = ASTQuery::findDeclarationForNode(doneTrigger, scopeStack, m_tree);
@@ -5483,6 +5506,14 @@ void CodeResolver::storeDeclarationsForNode(ASTNode node, ScopeStack scopeStack,
           for (const auto &node : internalStreams->getChildren()) {
             storeDeclarationsForNode(node, stack, m_tree);
           }
+        }
+      }
+    } else if (decl->getEntityType() == "iterator" ||
+               decl->getEntityType() == "sequence") {
+      for (const auto &prop : decl->getProperties()) {
+        if (prop && prop->getValue() && prop->getName() != "domain" &&
+            prop->getName() != "type") {
+          storeDeclarationsForNode(prop->getValue(), scopeStack, tree);
         }
       }
     }
