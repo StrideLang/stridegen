@@ -199,8 +199,8 @@ void StrideFramework::installFramework() {
 #else
                     std::array<char, 128> buffer;
                     std::string result;
-                    std::unique_ptr<FILE, decltype(&_pclose)> pipe(
-                        _popen(command.c_str(), "r"), _pclose);
+                    std::unique_ptr<FILE, decltype(&pclose)> pipe(
+                        popen(command.c_str(), "r"), pclose);
                     if (!pipe) {
                       throw std::runtime_error("popen() failed!");
                     }
@@ -208,8 +208,6 @@ void StrideFramework::installFramework() {
                            nullptr) {
                       result += buffer.data();
                     }
-                    std::cerr << __FUNCTION__ << " Not implemented!"
-                              << std::endl;
 #endif
                     std::filesystem::current_path(previousPath);
                   }
