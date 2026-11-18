@@ -365,6 +365,10 @@ ASTNode CodeAnalysis::getNodeDomain(ASTNode node, ScopeStack scopeStack,
               }
             }
           }
+        } else if (funcDecl->getName() == "Sleep" &&
+                   funcDecl->getEntityType() == "module") {
+          domainNode = std::static_pointer_cast<FunctionNode>(node)
+                           ->getPropertyValue("domain");
         } else if (funcDecl->getEntityType() == "reaction") {
           // reactions currently belong to a single domain.
           domainNode = funcDecl->getPropertyValue("domain");
