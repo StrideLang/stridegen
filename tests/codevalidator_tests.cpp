@@ -355,3 +355,45 @@ signal ZeroRateSig { rate: 0 domain: RateDom }
   }
   EXPECT_TRUE(foundError);
 }
+
+TEST(CodeValidator, RateAdapterPropagatesPortRatesAndWarnsOnScalarToArray) {
+  auto strideroot = ASTFunctions::getDefaultStrideRoot();
+  std::string code = R"(
+_domainDefinition AudioDom {
+    rate: 48000
+}
+signal Out { rate: 48000 domain: AudioDom }
+signal Arr[8] { domain: AudioDom }
+1.0 >> RateAdapter(rate: 12000) >> Out;
+0.0 >> Cos() >> Arr;
+)";
+  std::string tempFile = "temp_validator_rateadapter.stride";
+  {
+    std::ofstream out(tempFile);
+    out << code;
+  }
+  ASTNode tree = AST::parseFile(tempFile.c_str());
+  ASSERT_NE(tree, nullptr);
+  tree->addChild(
+      std::make_shared<SystemNode>("JIT", 1, 0, __FILE__, __LINE__));
+  ASTFunctions::preprocess(tree);
+
+  CodeResolver resolver(tree, strideroot);
+  resolver.process();
+
+  CodeValidator validator(tree);
+  EXPECT_TRUE(validator.isValid());
+
+  for (const auto &err : validator.getErrors()) {
+    ADD_FAILURE() << err.getErrorText();
+  }
+  bool foundScalarToArrayWarning = false;
+  for (const auto &w : validator.getWarnings()) {
+    if (w.type == LangError::ScalarCallToArray) {
+      foundScalarToArrayWarning = true;
+      EXPECT_EQ(w.severity, LangError::Warning);
+    }
+  }
+  EXPECT_TRUE(foundScalarToArrayWarning);
+  std::remove(tempFile.c_str());
+}

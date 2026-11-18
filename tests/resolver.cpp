@@ -86,6 +86,82 @@ TEST(Resolver, ResolveBlockPersistence) {
   // https://github.com/StrideLang/stridegen/issues/4
 }
 
+TEST(Resolver, ResolveArrayAndReactionPersistence) {
+  auto strideroot = ASTFunctions::getDefaultStrideRoot();
+  std::string code = R"(
+module RingDelay {
+    ports: [
+        mainInputPort InputPort { entity: Input },
+        mainOutputPort OutputPort { entity: Output }
+    ]
+    entities: [
+        signal Input { type: Real }
+        signal Output { type: Real }
+        signal Ring[4] { type: Real }
+        signal WriteIdx { default: 0 }
+        signal ReadIdx { default: 1 }
+    ]
+    streams: [
+        Input >> Ring[WriteIdx];
+        Ring[ReadIdx] >> Output;
+        WriteIdx + 1 >> WriteIdx;
+    ]
+}
+
+module LazyTable {
+    ports: [
+        mainOutputPort OutputPort { entity: Output }
+    ]
+    entities: [
+        signal Output { type: Real }
+        signal Table[4] { type: Real }
+        switch NeedsInit { default: on }
+        reaction Init {
+            streams: [
+                [ 1.0, 2.0, 3.0, 4.0 ] >> Table;
+                off >> NeedsInit;
+            ]
+        }
+    ]
+    streams: [
+        NeedsInit >> Init();
+        Table[0] >> Output;
+    ]
+}
+
+signal In { type: Real }
+signal OutA { type: Real }
+signal OutB { type: Real }
+In >> RingDelay() >> OutA;
+LazyTable() >> OutB;
+)";
+  std::string fname = writeCodeToFile(code);
+  ASTNode tree = AST::parseFile(fname.c_str());
+  ASSERT_NE(tree, nullptr);
+  ASTFunctions::preprocess(tree);
+
+  CodeResolver resolver(tree, strideroot);
+  resolver.process();
+
+  auto checkPersistent = [&](const std::string &modName,
+                             const std::string &entityName, bool expected) {
+    auto modDecl = ASTQuery::findDeclarationByName(modName, ScopeStack(), tree);
+    ASSERT_NE(modDecl, nullptr);
+    auto entities = modDecl->getPropertyValue("entities");
+    auto decl =
+        ASTQuery::findDeclarationByName(entityName, ScopeStack(), entities);
+    ASSERT_NE(decl, nullptr) << modName << "::" << entityName;
+    auto p = decl->getCompilerProperty("persistent");
+    EXPECT_EQ(p != nullptr, expected) << modName << "::" << entityName;
+  };
+
+  checkPersistent("RingDelay", "Ring", true);
+  checkPersistent("RingDelay", "WriteIdx", true);
+  checkPersistent("RingDelay", "ReadIdx", false);
+  checkPersistent("LazyTable", "Table", true);
+  checkPersistent("LazyTable", "NeedsInit", true);
+}
+
 TEST(Resolver, ResolveTypes) {
   auto strideroot = ASTFunctions::getDefaultStrideRoot();
   ASTNode tree;

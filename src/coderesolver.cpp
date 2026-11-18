@@ -493,19 +493,26 @@ void CodeResolver::resolveStreamRatesReverse(std::shared_ptr<StreamNode> stream,
   }
   double rate = CodeAnalysis::getNodeRate(left, scope, tree);
   double rightRate = -1;
+  ASTNode rightTarget =
+      (right->getNodeType() == AST::Stream)
+          ? static_cast<StreamNode *>(right.get())->getLeft()
+          : right;
   if (right->getNodeType() == AST::Stream) {
     resolveStreamRatesReverse(std::static_pointer_cast<StreamNode>(right),
                               scope, tree);
-    rightRate = CodeAnalysis::getNodeRate(
-        static_cast<StreamNode *>(right.get())->getLeft(), scope, tree);
-  } else {
-    rightRate = CodeAnalysis::getNodeRate(right, scope, tree);
+  }
+  if (rightTarget && rightTarget->getNodeType() == AST::Function) {
+    double inPortRate = CodeAnalysis::getModulePortRate(
+        std::static_pointer_cast<FunctionNode>(rightTarget), "mainInputPort",
+        scope, tree);
+    if (inPortRate >= 0) {
+      rightRate = inPortRate;
+    }
+  }
+  if (rightRate < 0 && rightTarget) {
+    rightRate = CodeAnalysis::getNodeRate(rightTarget, scope, tree);
   }
   if (rate < 0 && rightRate >= 0) {
-    ASTNode rightTarget =
-        (right->getNodeType() == AST::Stream)
-            ? static_cast<StreamNode *>(right.get())->getLeft()
-            : right;
     std::string leftDom = CodeAnalysis::getNodeDomainName(left, scope, m_tree);
     std::string rightDom =
         CodeAnalysis::getNodeDomainName(rightTarget, scope, m_tree);
@@ -564,7 +571,12 @@ void CodeResolver::resolveStreamRates(std::shared_ptr<StreamNode> stream,
   if (right->getNodeType() == AST::Stream) {
     ASTNode rightLeft = static_cast<StreamNode *>(right.get())->getLeft();
     rightRate = CodeAnalysis::getNodeRate(rightLeft, scope, m_tree);
-    if (rightRate < 0 && rate >= 0) {
+    bool rightAdaptsInputRate =
+        rightLeft && rightLeft->getNodeType() == AST::Function &&
+        CodeAnalysis::getModulePortRate(
+            std::static_pointer_cast<FunctionNode>(rightLeft),
+            "mainInputPort", scope, m_tree) >= 0;
+    if (rightRate < 0 && rate >= 0 && !rightAdaptsInputRate) {
       std::string leftDom = CodeAnalysis::getNodeDomainName(left, scope, m_tree);
       std::string rightDom =
           CodeAnalysis::getNodeDomainName(rightLeft, scope, m_tree);
@@ -576,13 +588,24 @@ void CodeResolver::resolveStreamRates(std::shared_ptr<StreamNode> stream,
           CodeResolver::setNodeRate(rightLeft, defaultRate, scope, m_tree);
         }
       }
+    } else if (rightRate < 0 && rightAdaptsInputRate &&
+               fallbackToDomainDefault) {
+      double defaultRate = resolveDefaultDomainRate(rightLeft);
+      if (defaultRate > 0) {
+        CodeResolver::setNodeRate(rightLeft, defaultRate, scope, m_tree);
+      }
     }
     resolveStreamRates(std::static_pointer_cast<StreamNode>(right), scope, tree,
                        fallbackToDomainDefault);
   } else {
     rightRate = CodeAnalysis::getNodeRate(right, scope, m_tree);
+    bool rightAdaptsInputRate =
+        right && right->getNodeType() == AST::Function &&
+        CodeAnalysis::getModulePortRate(
+            std::static_pointer_cast<FunctionNode>(right), "mainInputPort",
+            scope, m_tree) >= 0;
     if (rightRate < 0) {
-      if (rate >= 0) {
+      if (rate >= 0 && !rightAdaptsInputRate) {
         std::string leftDom =
             CodeAnalysis::getNodeDomainName(left, scope, m_tree);
         std::string rightDom =
@@ -724,118 +747,248 @@ void CodeResolver::resolveStreamTypesForward(std::shared_ptr<StreamNode> stream,
   }
 }
 
-void CodeResolver::markNodePersistence(ASTNode streamsList, ASTNode blocksList,
-                                       ScopeStack &scope, ASTNode tree) {
-  if (!streamsList)
-    return;
-  std::set<std::string> blocksWritten;
-  std::set<std::string> blocksRead;
+namespace {
+struct PersistenceState {
+  std::set<std::shared_ptr<DeclarationNode>> readSet;
+  std::set<std::shared_ptr<DeclarationNode>> dynamicReadSet;
+  std::map<std::shared_ptr<DeclarationNode>, std::set<int64_t>> readIndices;
+  std::set<std::shared_ptr<DeclarationNode>> wholeWritten;
+  std::set<std::shared_ptr<DeclarationNode>> condOrPartialWritten;
+  std::map<std::shared_ptr<DeclarationNode>, std::set<int64_t>>
+      constWrittenIndices;
+};
 
-  std::function<void(const ASTNode &, std::vector<std::string> &)>
-      collectNodeNames =
-          [&](const ASTNode &n, std::vector<std::string> &names) {
-            if (!n)
-              return;
-            if (n->getNodeType() == AST::List ||
-                n->getNodeType() == AST::Expression) {
-              for (const auto &element : n->getChildren()) {
-                collectNodeNames(element, names);
-              }
-            } else if (n->getNodeType() != AST::Function) {
-              std::string nm = ASTQuery::getNodeName(n);
-              if (!nm.empty()) {
-                names.push_back(nm);
-              }
-            }
-          };
-
-  for (const ASTNode &stream : streamsList->getChildren()) {
-    if (stream->getNodeType() == AST::Stream) {
-      bool streamStart = true;
-
-      // Check all blocks and determine which local blocks need to be made
-      // persistent
-      auto streamIt =
-          StreamNodeIterator(std::static_pointer_cast<StreamNode>(stream));
-      while (auto node = streamIt.next()) {
-        std::vector<std::string> nodeNames;
-
-        // TODO handle streams inside functions recursively.
-        if (node->getNodeType() == AST::Function) {
-          auto funcDecl = ASTQuery::findDeclarationForNode(node, scope, m_tree);
-          if (funcDecl) {
-            auto funcDeclType = ASTQuery::findTypeDeclarationByName(
-                funcDecl->getEntityType(), scope, m_tree);
-            if (funcDeclType &&
-                ASTQuery::isCodeGenerator(funcDeclType, scope, m_tree)) {
-              auto blocksList = funcDecl->getPropertyValue("entities");
-              auto streamsList = funcDecl->getPropertyValue("streams");
-              if (blocksList) {
-                scope.push_back({funcDecl, blocksList->getChildren()});
-              }
-              markNodePersistence(streamsList, blocksList, scope, tree);
-              if (blocksList) {
-                scope.pop_back();
-              }
-            }
-          } else {
-            std::cerr << "ERROR: Can't find declaration for: " << node->toText()
-                      << std::endl;
-          }
-        } else {
-          collectNodeNames(node, nodeNames);
-        }
-
-        for (const auto &nodeName : nodeNames) {
-          auto blockDeclInternal =
-              ASTQuery::findDeclarationByName(nodeName, scope, tree);
-          if (blockDeclInternal) {
-            if (streamIt.hasNext()) { // If there is a next node, this is
-              // a read
-              blocksRead.insert(nodeName);
-            }
-            if (!streamStart) {
-              if (std::find(blocksRead.begin(), blocksRead.end(), nodeName) !=
-                  blocksRead.end()) {
-                if (std::find(blocksWritten.begin(), blocksWritten.end(),
-                              nodeName) == blocksWritten.end()) {
-                  // First time writing but we have already read, this block
-                  // should to be persistent. But we need to check if scope
-                  // allows persistence.
-                  // TODO should this happen instead by explicitly making the
-                  // reset first before processing here?
-                  bool persistenceAllowed = true;
-                  if (scope.size() > 0) {
-                    auto parentNode = scope.back().first;
-                    if (parentNode &&
-                        (parentNode->getNodeType() == AST::Declaration ||
-                         parentNode->getNodeType() == AST::ArrayDeclaration)) {
-                      auto parentDecl =
-                          std::static_pointer_cast<DeclarationNode>(parentNode);
-                      auto typeDecl = ASTQuery::findTypeDeclaration(
-                          parentDecl, scope, tree);
-                      // Assume type is stateful unless proven otherwise.
-                      // Is this the best idea?
-                      if (!typeDecl || (!ASTQuery::isStatelessGenerator(
-                                           typeDecl, scope, tree))) {
-                        if (persistenceAllowed) {
-                          blockDeclInternal->setCompilerProperty(
-                              "persistent", std::make_shared<ValueNode>(
-                                                true, __FILE__, __LINE__));
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-              blocksWritten.insert(nodeName);
-            }
-          }
-        }
-        streamStart = false;
+std::shared_ptr<DeclarationNode>
+findPersistentCandidateDecl(const std::string &name, const ScopeStack &scope,
+                            ASTNode tree) {
+  for (int i = static_cast<int>(scope.size()) - 1; i >= 0; --i) {
+    auto found = ASTQuery::findDeclarationByName(name, {scope[i]}, nullptr);
+    if (!found) {
+      continue;
+    }
+    ASTNode owner = scope[i].first;
+    if (owner && (owner->getNodeType() == AST::Declaration ||
+                  owner->getNodeType() == AST::ArrayDeclaration)) {
+      auto ownerDecl = std::static_pointer_cast<DeclarationNode>(owner);
+      auto typeDecl = ASTQuery::findTypeDeclaration(ownerDecl, scope, tree);
+      if (typeDecl && ASTQuery::isStatelessGenerator(typeDecl, scope, tree)) {
+        return nullptr;
       }
     }
+    return found;
   }
+  return ASTQuery::findDeclarationByName(name, {}, tree);
+}
+
+void resolvePersistenceRecursive(ASTNode streamsList, ScopeStack &scope,
+                                 ASTNode tree, ASTNode rootTree,
+                                 PersistenceState &state,
+                                 bool isUnconditional) {
+  if (!streamsList) {
+    return;
+  }
+
+  auto markPersistent = [](const std::shared_ptr<DeclarationNode> &decl) {
+    decl->setCompilerProperty(
+        "persistent", std::make_shared<ValueNode>(true, __FILE__, __LINE__));
+  };
+
+  auto recordRead = [&](const std::shared_ptr<DeclarationNode> &decl) {
+    if (!decl) {
+      return;
+    }
+    if (state.condOrPartialWritten.count(decl) &&
+        !state.wholeWritten.count(decl)) {
+      markPersistent(decl);
+    }
+    state.readSet.insert(decl);
+    state.dynamicReadSet.insert(decl);
+  };
+
+  auto tryEvalConstIndex = [&](const std::shared_ptr<ArrayNode> &arrNode,
+                               int64_t &outIdx) -> bool {
+    if (!arrNode || !arrNode->index() ||
+        arrNode->index()->getChildren().size() != 1) {
+      return false;
+    }
+    std::vector<LangError> evalErrors;
+    outIdx = ASTFunctions::evaluateConstInteger(
+        arrNode->index()->getChildren()[0], scope, tree, &evalErrors);
+    return evalErrors.empty();
+  };
+
+  auto recordArrayRead = [&](const std::shared_ptr<DeclarationNode> &decl,
+                             bool hasConstIdx, int64_t constIdx) {
+    if (!decl) {
+      return;
+    }
+    if (!state.wholeWritten.count(decl)) {
+      if (state.condOrPartialWritten.count(decl)) {
+        markPersistent(decl);
+      } else if (hasConstIdx) {
+        state.readIndices[decl].insert(constIdx);
+      } else {
+        auto it = state.constWrittenIndices.find(decl);
+        if (it != state.constWrittenIndices.end() && !it->second.empty()) {
+          int declSize =
+              ASTQuery::getEntityDeclaredSize(decl, scope, tree, nullptr);
+          if (declSize <= 0 ||
+              static_cast<int>(it->second.size()) < declSize) {
+            markPersistent(decl);
+          }
+        }
+        state.dynamicReadSet.insert(decl);
+      }
+    }
+    state.readSet.insert(decl);
+  };
+
+  auto recordWrite = [&](const std::shared_ptr<DeclarationNode> &decl,
+                         bool isWhole, bool hasConstIdx = false,
+                         int64_t constIdx = 0) {
+    if (!decl) {
+      return;
+    }
+    if (state.wholeWritten.count(decl)) {
+      return;
+    }
+    if (isWhole) {
+      if (state.readSet.count(decl)) {
+        markPersistent(decl);
+      }
+      if (isUnconditional) {
+        state.wholeWritten.insert(decl);
+      } else {
+        state.condOrPartialWritten.insert(decl);
+      }
+    } else if (isUnconditional && hasConstIdx) {
+      if (state.dynamicReadSet.count(decl) ||
+          (state.readIndices.count(decl) &&
+           state.readIndices[decl].count(constIdx))) {
+        markPersistent(decl);
+      }
+      state.constWrittenIndices[decl].insert(constIdx);
+    } else {
+      if (state.readSet.count(decl)) {
+        markPersistent(decl);
+      }
+      state.condOrPartialWritten.insert(decl);
+    }
+  };
+
+  std::function<void(const ASTNode &)> collectReads = [&](const ASTNode &n) {
+    if (!n) {
+      return;
+    }
+    AST::Token nt = n->getNodeType();
+    if (nt == AST::List || nt == AST::Expression || nt == AST::Range ||
+        nt == AST::GeneratorRange) {
+      for (const auto &child : n->getChildren()) {
+        collectReads(child);
+      }
+    } else if (nt == AST::Array) {
+      auto arrNode = std::static_pointer_cast<ArrayNode>(n);
+      collectReads(arrNode->index());
+      int64_t constIdx = 0;
+      bool hasConstIdx = tryEvalConstIndex(arrNode, constIdx);
+      recordArrayRead(
+          findPersistentCandidateDecl(arrNode->getName(), scope, tree),
+          hasConstIdx, constIdx);
+    } else if (nt == AST::Function) {
+      auto funcNode = std::static_pointer_cast<FunctionNode>(n);
+      for (const auto &prop : funcNode->getProperties()) {
+        if (prop) {
+          collectReads(prop->getValue());
+        }
+      }
+    } else {
+      std::string nm = ASTQuery::getNodeName(n);
+      if (!nm.empty()) {
+        recordRead(findPersistentCandidateDecl(nm, scope, tree));
+      }
+    }
+  };
+
+  std::function<void(const ASTNode &)> collectWrites = [&](const ASTNode &n) {
+    if (!n) {
+      return;
+    }
+    AST::Token nt = n->getNodeType();
+    if (nt == AST::List) {
+      for (const auto &child : n->getChildren()) {
+        collectWrites(child);
+      }
+    } else if (nt == AST::Array) {
+      auto arrNode = std::static_pointer_cast<ArrayNode>(n);
+      // An array's index expression is always read, and element writes only
+      // update part of the array rather than initializing the whole array.
+      collectReads(arrNode->index());
+      int64_t constIdx = 0;
+      bool hasConstIdx = tryEvalConstIndex(arrNode, constIdx);
+      recordWrite(findPersistentCandidateDecl(arrNode->getName(), scope, tree),
+                  /*isWhole=*/false, hasConstIdx, constIdx);
+    } else if (nt != AST::Function && nt != AST::Expression) {
+      std::string nm = ASTQuery::getNodeName(n);
+      if (!nm.empty()) {
+        recordWrite(findPersistentCandidateDecl(nm, scope, tree),
+                    /*isWhole=*/true);
+      }
+    }
+  };
+
+  for (const ASTNode &stream : streamsList->getChildren()) {
+    if (!stream || stream->getNodeType() != AST::Stream) {
+      continue;
+    }
+    bool streamStart = true;
+    auto streamIt =
+        StreamNodeIterator(std::static_pointer_cast<StreamNode>(stream));
+    while (auto node = streamIt.next()) {
+      if (node->getNodeType() == AST::Function) {
+        collectReads(node);
+        auto funcDecl = ASTQuery::findDeclarationForNode(node, scope, rootTree);
+        if (funcDecl) {
+          auto funcDeclType = ASTQuery::findTypeDeclarationByName(
+              funcDecl->getEntityType(), scope, rootTree);
+          if (funcDeclType &&
+              ASTQuery::isStatelessGenerator(funcDeclType, scope, rootTree)) {
+            auto blocksList = funcDecl->getPropertyValue("entities");
+            auto nestedStreams = funcDecl->getPropertyValue("streams");
+            if (blocksList) {
+              scope.push_back({funcDecl, blocksList->getChildren()});
+            }
+            // Writes inside inline reactions (or nested loops) to outer
+            // module entities may not run unconditionally on every tick.
+            resolvePersistenceRecursive(nestedStreams, scope, tree, rootTree,
+                                        state, /*isUnconditional=*/false);
+            if (blocksList) {
+              scope.pop_back();
+            }
+          }
+        } else {
+          std::cerr << "ERROR: Can't find declaration for: " << node->toText()
+                    << std::endl;
+        }
+      } else {
+        if (!streamStart) {
+          collectWrites(node);
+        }
+        if (streamIt.hasNext()) {
+          collectReads(node);
+        }
+      }
+      streamStart = false;
+    }
+  }
+}
+} // namespace
+
+void CodeResolver::markNodePersistence(ASTNode streamsList,
+                                       ASTNode /*blocksList*/,
+                                       ScopeStack &scope, ASTNode tree) {
+  PersistenceState state;
+  resolvePersistenceRecursive(streamsList, scope, tree, m_tree, state,
+                              /*isUnconditional=*/true);
 }
 
 void CodeResolver::analyzeChildConnections(ASTNode node,
@@ -3369,15 +3522,8 @@ void CodeResolver::setDomainForStack(std::vector<ASTNode> domainStack,
                                      ASTNode resolvingInstance,
                                      ASTNode domainName,
                                      ScopeStack scopeStack) {
+  (void)resolvingInstance;
   for (ASTNode relatedNode : domainStack) {
-    if (resolvingInstance->getNodeType() == AST::Declaration &&
-        std::static_pointer_cast<DeclarationNode>(resolvingInstance)
-                ->getEntityType() == "table") {
-      // Table captures this stream
-      relatedNode->setCompilerProperty("tableCaptureInstance",
-                                       resolvingInstance);
-    }
-
     setDomainForNode(relatedNode, domainName, scopeStack, m_tree);
   }
 }

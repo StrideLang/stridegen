@@ -78,6 +78,14 @@ public:
   static double getNodeRate(ASTNode node, ScopeStack scope = ScopeStack(),
                             ASTNode tree = nullptr);
 
+  static double getModulePortRate(std::shared_ptr<FunctionNode> funcNode,
+                                  const std::string &portType,
+                                  const ScopeStack &scope, ASTNode tree);
+
+  static ASTNode getModulePortRateExpr(std::shared_ptr<FunctionNode> funcNode,
+                                       const std::string &portType,
+                                       const ScopeStack &scope, ASTNode tree);
+
   static double resolveRate(ASTNode node, ScopeStack scopeStack, ASTNode tree,
                             bool downStream = true);
 

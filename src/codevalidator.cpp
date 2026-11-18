@@ -1580,13 +1580,13 @@ void CodeValidator::validateStreamInputSize(StreamNode *stream,
   } else {
     rightDecl = ASTQuery::findDeclarationForNode(right, scope, m_tree);
   }
+  ASTNode rightTarget =
+      (right->getNodeType() == AST::Stream)
+          ? static_cast<StreamNode *>(right.get())->getLeft()
+          : right;
   if ((leftDecl && leftDecl->getEntityType() == "buffer") ||
       (rightDecl && rightDecl->getEntityType() == "buffer")) {
     // FIXME how should buffer size be validated?
-
-  } else if ((leftDecl && leftDecl->getEntityType() == "table") ||
-             (rightDecl && rightDecl->getEntityType() == "table")) {
-    // FIXME how should table size be validated?
 
   } else {
     if (leftOutSize == -2 || rightInSize == -2) {
@@ -1603,6 +1603,19 @@ void CodeValidator::validateStreamInputSize(StreamNode *stream,
         error.errorTokens.push_back(ASTQuery::getNodeName(left));
         error.errorTokens.push_back(std::to_string(rightInSize));
         errors.push_back(error);
+      } else if (left && left->getNodeType() == AST::Function &&
+                 leftOutSize == 1 && rightTarget &&
+                 rightTarget->getNodeType() == AST::Entity && rightDecl &&
+                 rightDecl->getNodeType() == AST::ArrayDeclaration &&
+                 rightInSize > 1) {
+        LangError warning;
+        warning.type = LangError::ScalarCallToArray;
+        warning.severity = LangError::Warning;
+        right->copyLocationTo(warning);
+        warning.errorTokens.push_back(ASTQuery::getNodeName(left));
+        warning.errorTokens.push_back(ASTQuery::getNodeName(rightTarget));
+        warning.errorTokens.push_back(std::to_string(rightInSize));
+        m_warnings.push_back(warning);
       }
     }
   }
