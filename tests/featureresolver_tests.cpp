@@ -761,9 +761,9 @@ TEST(FeatureResolverTest, IsConditionMetPredicate) {
 
   // Negation
   auto notAudio = std::make_shared<ExpressionNode>(
-      ExpressionNode::LogicalNot, audioNode, nullptr, "test", 1);
+      ExpressionNode::LogicalNot, audioNode, "test", 1);
   auto notDebug = std::make_shared<ExpressionNode>(
-      ExpressionNode::LogicalNot, debugNode, nullptr, "test", 1);
+      ExpressionNode::LogicalNot, debugNode, "test", 1);
   EXPECT_FALSE(FeatureResolver::isConditionMet(notAudio, config));
   EXPECT_TRUE(FeatureResolver::isConditionMet(notDebug, config));
 
