@@ -38,7 +38,9 @@ namespace strd {
 // `board` is a game library type:
 //   board  -> board or device   (platforms/<P>/boards/<Name>.stride)
 //   device -> device or core    (platforms/<P>/devices/<Name>.stride)
-//   core   -> core              (cores/<Name>.stride, shared by platforms)
+//   core   -> core              (platforms/<P>/cores/<Name>.stride, then
+//                                 cores/<Name>.stride for cores that several
+//                                 platforms share)
 enum class HardwareKind { Core, Device, Board };
 
 const char *hardwareKindName(HardwareKind kind);

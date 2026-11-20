@@ -46,6 +46,7 @@ public:
     std::filesystem::create_directories(m_root / "cores");
     std::filesystem::create_directories(m_root / "platforms/P/devices");
     std::filesystem::create_directories(m_root / "platforms/P/boards");
+    std::filesystem::create_directories(m_root / "platforms/P/cores");
   }
   ~ScratchRoot() {
     std::error_code ec;
@@ -144,6 +145,30 @@ TEST(HardwareResolver, ListsDoNotDuplicateItems) {
   ASSERT_TRUE(d.has_value());
   EXPECT_EQ(d->nameListProperty("frameworks"),
             (std::vector<std::string>{"A", "B", "Z"}));
+}
+
+TEST(HardwareResolver, PlatformCoreComesBeforeSharedCore) {
+  ScratchRoot root;
+  root.write("cores/C.stride", "core C { triple: \"shared\" pointerBits: 32 }\n");
+  root.write("platforms/P/cores/C.stride",
+             "core C { triple: \"platform\" pointerBits: 16 }\n");
+  root.write("platforms/P/devices/D.stride",
+             "device D { platform: P overlays: C }\n");
+  HardwareResolver resolver(root.path());
+  auto d = resolver.resolve("P", "D");
+  ASSERT_TRUE(d.has_value());
+  EXPECT_EQ(d->stringProperty("triple"), "platform");
+}
+
+TEST(HardwareResolver, SharedCoreIsTheFallback) {
+  ScratchRoot root;
+  root.write("cores/C.stride", "core C { triple: \"shared\" pointerBits: 32 }\n");
+  root.write("platforms/P/devices/D.stride",
+             "device D { platform: P overlays: C }\n");
+  HardwareResolver resolver(root.path());
+  auto d = resolver.resolve("P", "D");
+  ASSERT_TRUE(d.has_value());
+  EXPECT_EQ(d->stringProperty("triple"), "shared");
 }
 
 TEST(HardwareResolver, NamedEntryReplacesEntryBelow) {

@@ -84,7 +84,7 @@ CodeResolver::CodeResolver(ASTNode tree, std::string striderootDir,
   if (systems.size() > 0) {
     auto platformDir = std::filesystem::path(striderootDir) / "platforms" /
                        systems.at(0)->platformName();
-    for (const char *sub : {"boards", "devices"}) {
+    for (const char *sub : {"boards", "devices", "cores"}) {
       if (std::filesystem::is_directory(platformDir / sub)) {
         includePaths.push_back((platformDir / sub).generic_string());
       }

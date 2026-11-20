@@ -321,7 +321,11 @@ HardwareResolver::findLayer(const std::string &platformName,
         {HardwareKind::Board, platformDir + "/boards/" + name + ".stride"});
     candidates.push_back(
         {HardwareKind::Device, platformDir + "/devices/" + name + ".stride"});
+    // A core only this platform's devices use, such as AVR5.
+    candidates.push_back(
+        {HardwareKind::Core, platformDir + "/cores/" + name + ".stride"});
   }
+  // A core several platforms share.
   candidates.push_back(
       {HardwareKind::Core, m_strideroot + "/cores/" + name + ".stride"});
 
