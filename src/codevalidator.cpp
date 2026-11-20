@@ -1188,8 +1188,23 @@ void CodeValidator::validateSymbolUniqueness(ScopeStack scope,
         }
 
         // Check if scope matches
-        auto nodeScopes = node->getNamespaceList();
-        auto siblingScopes = sibling->getNamespaceList();
+        // Check if canonical namespace matches
+        auto canonicalNamespace = [](const ASTNode &n) {
+          std::vector<std::string> ns;
+          if (auto nsProp = n->getCompilerProperty("namespaceTree")) {
+            for (const auto &seg : nsProp->getChildren()) {
+              if (seg->getNodeType() == AST::String) {
+                ns.push_back(
+                    std::static_pointer_cast<ValueNode>(seg)->getStringValue());
+              }
+            }
+          } else {
+            ns = n->getNamespaceList();
+          }
+          return ns;
+        };
+        auto nodeScopes = canonicalNamespace(node);
+        auto siblingScopes = canonicalNamespace(sibling);
         if (nodeScopes.size() == siblingScopes.size()) {
           bool duplicateSymbol = true;
           for (size_t k = 0; k < nodeScopes.size(); k++) {
