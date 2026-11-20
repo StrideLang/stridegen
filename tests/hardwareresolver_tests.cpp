@@ -604,3 +604,41 @@ device Bad {
   ASSERT_EQ(errors.size(), 1u);
   EXPECT_EQ(errors[0].message, "gpioField Pull of PortA has 2 options but 1 codes");
 }
+
+TEST(HardwareResolver, GpioMega2560) {
+  HardwareResolver resolver(ASTFunctions::getDefaultStrideRoot());
+  std::string error;
+  auto mega = resolver.resolve("AVR", "ArduinoMega2560", &error);
+  ASSERT_TRUE(mega.has_value()) << error;
+  EXPECT_EQ(mega->layerName(HardwareKind::Device), "ATmega2560");
+  EXPECT_EQ(mega->layerName(HardwareKind::Core), "AVR6");
+  EXPECT_EQ(mega->stringProperty("cpu"), "atmega2560");
+  EXPECT_EQ(mega->gpioPorts().size(), 11u);
+
+  // D7 is PH4, an extended I/O port; D2 is PE4 with INT4
+  auto d7 = mega->boardPin("D7");
+  ASSERT_TRUE(d7.has_value());
+  EXPECT_EQ(d7->port, "PortH");
+  EXPECT_EQ(d7->bit, 4);
+  auto relay = gpioPin("Relay", "D7", "PinOutput");
+  auto access = HardwareResolver::resolvePinAccess(*mega, relay);
+  ASSERT_TRUE(access.has_value());
+  EXPECT_EQ(access->outAddress, 0x102);
+  EXPECT_EQ(access->outMask, 0x10);
+
+  auto edge = gpioPin("Edge", "D2", "PinInput");
+  edge.interrupt = "InterruptRising";
+  EXPECT_TRUE(HardwareResolver::checkGpioPins(*mega, {edge}).empty());
+  // D4 is PG5: no external or pin-change interrupt
+  auto noEdge = gpioPin("NoEdge", "D4", "PinInput");
+  noEdge.interrupt = "InterruptBothEdges";
+  EXPECT_TRUE(anyContains(HardwareResolver::checkGpioPins(*mega, {noEdge}),
+                          "interrupt InterruptBothEdges is not supported"));
+  // D0 and D1 are the runtime's serial port; D13 is the LED
+  EXPECT_TRUE(anyContains(
+      HardwareResolver::checkGpioPins(*mega, {gpioPin("Rx", "D0", "PinInput")}),
+      "reserved by Usart0"));
+  EXPECT_EQ(mega->boardPin("LED")->port, "PortB");
+  EXPECT_EQ(mega->boardPin("LED")->bit, 7);
+  EXPECT_EQ(mega->boardPin("A15")->port, "PortK");
+}

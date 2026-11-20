@@ -778,17 +778,33 @@ void CodeResolver::processGpio() {
   }
 
   // DigitalIO calls: pin: becomes the pin's addresses and masks.
+  // `import BlinkRigMega as BlinkRig` lets the program keep writing
+  // BlinkRig::Status while the pins come from BlinkRigMega.stride.
+  std::map<std::string, std::string> importAliases;
+  for (const auto &import : ASTQuery::getImportNodes(m_tree)) {
+    if (!import->importAlias().empty()) {
+      auto path = ASTQuery::getImportPath(import);
+      auto sep = path.rfind("::");
+      importAliases[import->importAlias()] =
+          sep == std::string::npos ? path : path.substr(sep + 2);
+    }
+  }
   auto findPin = [&](const ASTNode &ref) -> int {
     if (!ref || ref->getNodeType() != AST::Entity) {
       return -1;
     }
     auto name = ASTQuery::getNodeName(ref);
     auto ns = ref->getNamespaceList();
+    std::string qualifier = ns.empty() ? std::string() : ns.back();
+    auto alias = importAliases.find(qualifier);
+    if (alias != importAliases.end()) {
+      qualifier = alias->second;
+    }
     for (size_t i = 0; i < pinDecls.size(); ++i) {
       if (pinDecls[i]->getName() != name) {
         continue;
       }
-      if (ns.empty() || fileStem(pinDecls[i]->getFilename()) == ns.back()) {
+      if (qualifier.empty() || fileStem(pinDecls[i]->getFilename()) == qualifier) {
         return static_cast<int>(i);
       }
     }
