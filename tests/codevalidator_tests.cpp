@@ -25,6 +25,7 @@
 #include <algorithm>
 #include <chrono>
 #include <fstream>
+#include <map>
 #include "gtest/gtest.h"
 
 #include "stride/stridegen/coderesolver.hpp"
@@ -396,4 +397,44 @@ signal Arr[8] { domain: AudioDom }
   }
   EXPECT_TRUE(foundScalarToArrayWarning);
   std::remove(tempFile.c_str());
+}
+
+// A typeClass of constants is an enumeration: a schema property typed with it
+// accepts its members, qualified by their package when they come from one,
+// and rejects any other constant.
+TEST(CodeValidator, EnumConstantGroups) {
+  auto strideroot = ASTFunctions::getDefaultStrideRoot();
+  ASTNode tree =
+      AST::parseFile(TESTS_SOURCE_DIR "validator/enum_constants.stride");
+  ASSERT_TRUE(tree != nullptr);
+  tree->addChild(
+      std::make_shared<SystemNode>("JIT", 1, 0, __FILE__, __LINE__));
+  ASTFunctions::preprocess(tree);
+
+  CodeResolver resolver(tree, strideroot);
+  resolver.process();
+
+  CodeValidator validator(tree);
+  std::map<int, std::vector<std::string>> errorsByLine;
+  for (auto &err : validator.getErrors()) {
+    if (err.filename.find("enum_constants.stride") != std::string::npos) {
+      errorsByLine[err.lineNumber].push_back(err.getErrorText());
+    }
+  }
+  // _Mixed (line 13), BadGroup (29) and BadStray (32). _Colors, GoodLocal
+  // and GoodQualified are valid.
+  std::vector<int> lines;
+  for (const auto &[line, texts] : errorsByLine) {
+    lines.push_back(line);
+  }
+  EXPECT_EQ(lines, (std::vector<int>{13, 29, 32}));
+  // The message names the constant that was given.
+  ASSERT_EQ(errorsByLine[29].size(), 1u);
+  EXPECT_NE(errorsByLine[29][0].find("PinOutput"), std::string::npos)
+      << errorsByLine[29][0];
+  for (const auto &[line, texts] : errorsByLine) {
+    for (const auto &t : texts) {
+      std::cout << "  validator: " << t << std::endl;
+    }
+  }
 }

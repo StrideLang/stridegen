@@ -45,9 +45,13 @@ typedef struct {
 
 class StrideSystem {
 public:
+  // includePaths are searched for imports before the standard library: the
+  // program's directory first (sibling files), then the active platform's
+  // hardware folders (boards, devices, cores).
   StrideSystem(std::string strideRoot, std::string systemName, int majorVersion,
                int minorVersion, std::vector<std::shared_ptr<ImportNode>> importList,
-               FeatureConfig featureConfig = FeatureConfig());
+               FeatureConfig featureConfig = FeatureConfig(),
+               std::vector<std::string> includePaths = {});
   ~StrideSystem();
 
   static std::vector<std::string> listAvailableSystems(std::string strideroot);
@@ -175,6 +179,7 @@ private:
 
   StrideLibrary m_library;
   FeatureConfig m_featureConfig;
+  std::vector<std::string> m_includePaths;
 };
 } // namespace strd
 

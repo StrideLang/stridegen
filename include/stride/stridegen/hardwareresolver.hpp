@@ -50,6 +50,122 @@ struct HardwareLayer {
   std::shared_ptr<DeclarationNode> declaration;
 };
 
+
+// GPIO description, read from the merged layers -------------------------------
+
+// One register field that sets an option (gpioField).
+struct GpioField {
+  std::string name;
+  std::string file;
+  int line = 0;
+  std::string option; // its typeClass, such as "_PinPulls"
+  int64_t reg = 0;
+  std::optional<int64_t> regHigh;
+  int bitsPerPin = 1;
+  int shift = 0;
+  int64_t pinStride = 0;
+  std::vector<std::string> options;
+  std::vector<int64_t> codes;
+  std::optional<int64_t> codeFor(const std::string &value) const;
+};
+
+struct GpioPort {
+  std::string name;
+  int index = 0;
+  int width = 8;
+  int64_t output = 0;
+  int64_t input = 0;
+  std::optional<int64_t> direction;
+  std::optional<int64_t> outputSet;
+  std::optional<int64_t> outputClear;
+  std::optional<int64_t> outputToggle;
+  std::optional<int64_t> directionSet;
+  std::optional<int64_t> directionClear;
+  int setShift = 0;
+  int clearShift = 0;
+  std::optional<int64_t> enableRegister;
+  int enableBit = 0;
+  bool driverAccess = false;
+  std::vector<GpioField> fields;
+};
+
+// A function a pin can carry (pinRoute).
+struct PinRoute {
+  std::string function;
+  std::optional<int64_t> select;
+  std::optional<int64_t> reg;
+};
+
+// A board label with what its chip pin can do (pin plus pinFeatures).
+struct BoardPin {
+  std::string label;
+  std::string port; // empty for an FPGA package pin
+  int bit = -1;
+  std::string package;
+  std::optional<int64_t> analog;
+  std::vector<std::string> modes;      // added by pinFeatures
+  std::vector<std::string> interrupts; // added by pinFeatures
+  std::vector<PinRoute> routes;
+  std::string reservedBy;
+};
+
+// A project's gpioPin, with the resolver's defaults applied.
+struct GpioPinConfig {
+  std::string name;
+  std::string file;
+  int line = 0;
+  std::string boardQualifier; // ArduinoUno in ArduinoUno::D2
+  std::string label;
+  std::string mode;
+  std::string outputType = "OutputPushPull";
+  std::string pull = "PullNone";
+  std::string drive = "DriveDefault";
+  std::string slew = "SlewDefault";
+  std::string interrupt = "InterruptNone";
+  std::string ioStandard = "IoDefault";
+  std::string function;
+  std::optional<bool> hysteresis;
+  bool activeLow = false;
+  bool initial = false;
+  static GpioPinConfig
+  fromDeclaration(const std::shared_ptr<DeclarationNode> &decl);
+};
+
+struct GpioError {
+  std::string file;
+  int line = 0;
+  std::string message;
+};
+
+// How the GPIO modules reach a pin.
+struct PinAccess {
+  std::string writeStyle; // WriteSetClear, WriteReadModify
+  int width = 8;
+  int64_t outAddress = 0;
+  int64_t setAddress = 0;
+  int64_t clearAddress = 0;
+  int64_t setMask = 0;
+  int64_t clearMask = 0;
+  int64_t outMask = 0;
+  int64_t inAddress = 0;
+  int64_t inMask = 0;
+  int64_t dirAddress = 0;
+  int64_t dirMask = 0;
+  bool invert = false;
+  bool openDrainEmulated = false;
+};
+
+// One startup register write. readModify writes
+// (register & ~clearMask) | setBits; otherwise setBits is stored as is.
+struct RegisterWrite {
+  int64_t address = 0;
+  int width = 8;
+  bool readModify = true;
+  uint64_t clearMask = 0;
+  uint64_t setBits = 0;
+  std::string reason;
+};
+
 // One merged view of a board, device or core and everything it overlays.
 //
 // Merge rules, applied from the base layer up to the leaf:
@@ -101,6 +217,19 @@ public:
     return m_properties;
   }
 
+  // GPIO: the device's ports, the board's labels joined with the device's
+  // pinFeatures, and what a pin supports for one option (its typeClass):
+  // the defaults, the codes of the port's fields, gpio.emulated and the
+  // pin's features.
+  std::vector<GpioPort> gpioPorts() const;
+  std::optional<GpioPort> gpioPort(const std::string &name) const;
+  std::vector<BoardPin> boardPins() const;
+  std::optional<BoardPin> boardPin(const std::string &label) const;
+  std::vector<std::string> supportedValues(const BoardPin &pin,
+                                           const std::string &option) const;
+  // Layer names of the chain, base first (AVR5, ATmega328P, ArduinoUno, ...).
+  bool hasLayer(const std::string &name) const;
+
 private:
   friend class HardwareResolver;
   std::vector<HardwareLayer> m_chain;
@@ -125,11 +254,38 @@ public:
 
   const std::string &strideroot() const { return m_strideroot; }
 
+  // Directories searched before strideroot for a layer `<Name>.stride`, such
+  // as a project's hardware file next to its program. A project file may
+  // declare a board, or a device (an FPGA soft core's GPIO block).
+  void addSearchDirectory(const std::string &dir);
+  const std::vector<std::string> &searchDirectories() const {
+    return m_searchDirectories;
+  }
+
   // A string, entity name or literal as text. Empty for other nodes.
   static std::string valueText(const ASTNode &node);
 
+  // GPIO -------------------------------------------------------------------
+  // Checks a project's gpioPin declarations against the resolved hardware:
+  // labels, values the device supports, keys that fit the mode, reserved
+  // pins and conflicting uses of one chip pin. One error per failing check.
+  static std::vector<GpioError>
+  checkGpioPins(const ResolvedHardware &hardware,
+                const std::vector<GpioPinConfig> &pins);
+  // How the GPIO modules reach a checked pin: addresses and masks.
+  static std::optional<PinAccess>
+  resolvePinAccess(const ResolvedHardware &hardware, const GpioPinConfig &pin);
+  // The register writes that set the pins up at startup, in order: port
+  // clocks, initial levels, pulls/drive/slew, function select, then mode
+  // and direction, so outputs never glitch. Writes to one register in one
+  // step are merged.
+  static std::vector<RegisterWrite>
+  pinSetupWrites(const ResolvedHardware &hardware,
+                 const std::vector<GpioPinConfig> &pins);
+
 private:
   std::string m_strideroot;
+  std::vector<std::string> m_searchDirectories;
 };
 
 } // namespace strd

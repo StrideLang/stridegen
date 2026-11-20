@@ -52,10 +52,11 @@ using namespace strd;
 StrideSystem::StrideSystem(std::string strideRoot, std::string systemName,
                            int majorVersion, int minorVersion,
                            std::vector<std::shared_ptr<ImportNode>> importList,
-                           FeatureConfig featureConfig)
+                           FeatureConfig featureConfig,
+                           std::vector<std::string> includePaths)
     : m_strideRoot(strideRoot), m_systemName(systemName),
       m_majorVersion(majorVersion), m_minorVersion(minorVersion),
-      m_featureConfig(featureConfig) {
+      m_featureConfig(featureConfig), m_includePaths(std::move(includePaths)) {
 
   if (systemName.size() == 0) {
     std::cerr << __FILE__ << ":" << __LINE__ << " WARNING: No System specified"
@@ -338,7 +339,7 @@ void StrideSystem::parseSystemTree(ASTNode systemTree, ASTNode configuration) {
   }
 
   // Initialize root namespace
-  m_library.initializeLibrary(m_strideRoot);
+  m_library.initializeLibrary(m_strideRoot, m_includePaths);
 
   for (auto libmembers : m_library.getLibraryMembers()) {
     if (m_systemNodes.find(libmembers.first) == m_systemNodes.end()) {

@@ -58,6 +58,8 @@ public:
 
   void process();
 
+  // Errors found while resolving, such as a gpioPin the board can't support.
+  const std::vector<LangError> &getErrors() const { return m_errors; }
   std::shared_ptr<StrideSystem> getSystem() { return m_system; }
   const PlatformPolicyManager &getPolicyManager() const { return m_policyManager; }
   PlatformPolicyManager &getPolicyManager() { return m_policyManager; }
@@ -67,6 +69,12 @@ public:
 private:
   // Main processing functions
   void processSystem();
+  // Replaces domain properties that name an alias of a domain, such as
+  // PlatformLoopDomain, with the domain itself.
+  void resolveDomainAliases();
+  // Checks gpioPin declarations against the board, sets the pins up in
+  // RootDomain's onLoad and fills the DigitalIO modules' pin: in.
+  void processGpio();
   void resolvePolicyVariants();
   void resolvePolicyVariantsForNode(
       ASTNode node, std::shared_ptr<DeclarationNode> activeDomain,
@@ -255,6 +263,7 @@ private:
   // Resolver configuration
   bool m_declareUnknownSymbols = false;
   FeatureConfig m_featureConfig;
+  std::vector<LangError> m_errors;
 };
 } // namespace strd
 

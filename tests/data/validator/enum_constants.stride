@@ -1,0 +1,32 @@
+# Groups of constants as schema types (typeClass of constants)
+import Gpio
+
+constant Red { value: 0 }
+constant Green { value: 1 }
+constant Blue { value: 2 }
+
+typeClass _Colors {
+    types: [Red, Green, Blue]
+}
+
+# Mixes a data type and a constant: an error
+typeClass _Mixed {
+    types: [Int, Red]
+}
+
+type _Holder {
+    typeName: "holder"
+    properties: [
+        typeProperty Color { name: "color" allowedTypes: _Colors default: Red required: off },
+        typeProperty Pull { name: "pull" allowedTypes: Gpio::_PinPulls required: on }
+    ]
+    inherits: [_Base]
+}
+
+holder GoodLocal { color: Green pull: Gpio::PullUp }
+holder GoodQualified { pull: Gpio::PullBusKeeper }
+# A constant from another group
+holder BadGroup { pull: Gpio::PinOutput }
+# A constant that is in no group
+constant Stray { value: 1 }
+holder BadStray { color: Stray pull: Gpio::PullNone }

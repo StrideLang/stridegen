@@ -32,11 +32,17 @@
 #include "stride/parser/generatorrangenode.h"
 #include "stride/parser/rangenode.h"
 #include "stride/parser/valuenode.h"
+#include "stride/parser/listnode.h"
+#include "stride/parser/propertynode.h"
+#include "stride/parser/streamnode.h"
+#include "stride/parser/functionnode.h"
+#include "stride/stridegen/hardwareresolver.hpp"
 #include "stride/utils/astfunctions.h"
 #include "stride/utils/astquery.h"
 
 #include <algorithm>
 #include <cassert>
+#include <filesystem>
 #include <functional>
 #include <iostream>
 #include <map>
@@ -61,12 +67,40 @@ CodeResolver::CodeResolver(ASTNode tree, std::string striderootDir,
   std::vector<std::shared_ptr<SystemNode>> systems =
       ASTQuery::getSystemNodes(tree);
 
+  // Imports are searched next to the program first, then in the active
+  // platform's hardware folders, so a project's hardware file can
+  // `import ArduinoUno` and a device can `import AVR5`.
+  std::vector<std::string> includePaths;
+  {
+    std::error_code ec;
+    std::filesystem::path programPath = tree->getFilename();
+    if (!programPath.empty()) {
+      auto absolute = std::filesystem::absolute(programPath, ec);
+      if (!ec && absolute.has_parent_path()) {
+        includePaths.push_back(absolute.parent_path().generic_string());
+      }
+    }
+  }
+  if (systems.size() > 0) {
+    auto platformDir = std::filesystem::path(striderootDir) / "platforms" /
+                       systems.at(0)->platformName();
+    for (const char *sub : {"boards", "devices"}) {
+      if (std::filesystem::is_directory(platformDir / sub)) {
+        includePaths.push_back((platformDir / sub).generic_string());
+      }
+    }
+    auto cores = std::filesystem::path(striderootDir) / "cores";
+    if (std::filesystem::is_directory(cores)) {
+      includePaths.push_back(cores.generic_string());
+    }
+  }
+
   if (systems.size() > 0) {
     std::shared_ptr<SystemNode> platformNode = systems.at(0);
     m_system = std::make_shared<StrideSystem>(
         striderootDir, platformNode->platformName(),
         platformNode->majorVersion(), platformNode->minorVersion(),
-        importList, m_featureConfig);
+        importList, m_featureConfig, includePaths);
     m_system->m_systemConfig = systemConfig;
 
     std::string targetDev;
@@ -86,8 +120,9 @@ CodeResolver::CodeResolver(ASTNode tree, std::string striderootDir,
       //      m_errors.append(error);
     }
   } else { // Make a default platform that only inlcudes the common library
-    m_system =
-        std::make_shared<StrideSystem>(striderootDir, "", -1, -1, importList, m_featureConfig);
+    m_system = std::make_shared<StrideSystem>(striderootDir, "", -1, -1,
+                                              importList, m_featureConfig,
+                                              includePaths);
     // TODO is it Ok to assume JIT for all missing cases? It seems very
     // practical.
     m_policyManager.loadPlatform(striderootDir, "JIT", "");
@@ -98,6 +133,11 @@ CodeResolver::~CodeResolver() {}
 
 void CodeResolver::process() {
   processSystem();
+  resolveDomainAliases();
+  processGpio();
+  if (!m_errors.empty()) {
+    return; // the tree can't be compiled; the caller reports m_errors
+  }
   desugar();
   // insert domain IO entity declarations
   auto ioEntityDecls =
@@ -425,6 +465,449 @@ void CodeResolver::processSystem() {
         }
       }
     }
+  }
+}
+
+void CodeResolver::resolveDomainAliases() {
+  if (!m_system) {
+    return;
+  }
+  auto importTrees = m_system->getImportTrees();
+  auto findDecl = [&](const std::string &name)
+      -> std::shared_ptr<DeclarationNode> {
+    if (auto decl = ASTQuery::findDeclarationByName(name, {}, m_tree)) {
+      return decl;
+    }
+    for (const auto &objects : importTrees) {
+      if (auto decl = ASTQuery::findDeclarationByName(
+              name, {{nullptr, objects.second}}, nullptr)) {
+        return decl;
+      }
+    }
+    return nullptr;
+  };
+  // Follows an alias chain such as PlatformLoopDomain -> AvrLoopDomain to the
+  // domain it stands for. Only names that start at an alias are resolved.
+  auto aliasedDomain = [&](const std::string &name)
+      -> std::shared_ptr<DeclarationNode> {
+    auto decl = findDecl(name);
+    if (!decl || decl->getEntityType() != "alias") {
+      return nullptr;
+    }
+    std::set<std::string> seen{name};
+    while (decl && decl->getEntityType() == "alias") {
+      auto target = decl->getPropertyValue("entity");
+      if (!target || target->getNodeType() != AST::Entity) {
+        return nullptr;
+      }
+      std::string targetName = ASTQuery::getNodeName(target);
+      if (!seen.insert(targetName).second) {
+        return nullptr; // alias cycle
+      }
+      decl = findDecl(targetName);
+    }
+    if (decl && decl->getEntityType() == "_domainDefinition") {
+      return decl;
+    }
+    return nullptr;
+  };
+
+  std::vector<std::shared_ptr<DeclarationNode>> domainsToAdd;
+  auto replaceIfAlias = [&](const std::shared_ptr<PropertyNode> &prop,
+                            auto &&replace) {
+    if (!prop || (prop->getName() != "domain" &&
+                  prop->getName() != "parentDomain")) {
+      return;
+    }
+    auto value = prop->getValue();
+    if (!value || value->getNodeType() != AST::Entity ||
+        !value->getNamespaceList().empty()) {
+      return;
+    }
+    auto domain = aliasedDomain(ASTQuery::getNodeName(value));
+    if (!domain) {
+      return;
+    }
+    replace(prop->getName(),
+            std::make_shared<EntityNode>(domain->getName(),
+                                         value->getFilename().c_str(),
+                                         value->getLine()));
+    if (!ASTQuery::findDeclarationByName(domain->getName(), {}, m_tree, {}) &&
+        std::find(domainsToAdd.begin(), domainsToAdd.end(), domain) ==
+            domainsToAdd.end()) {
+      domainsToAdd.push_back(domain); // added after the walk over the tree
+    }
+  };
+
+  std::set<const void *> visited;
+  std::function<void(const ASTNode &)> walk = [&](const ASTNode &node) {
+    if (!node || !visited.insert(node.get()).second) {
+      return;
+    }
+    if (node->getNodeType() == AST::Declaration ||
+        node->getNodeType() == AST::ArrayDeclaration) {
+      auto decl = std::static_pointer_cast<DeclarationNode>(node);
+      // A copy: replacing a value changes the declaration's property list
+      const auto properties = decl->getProperties();
+      for (const auto &prop : properties) {
+        replaceIfAlias(prop, [&](const std::string &name, ASTNode v) {
+          decl->replacePropertyValue(name, v);
+        });
+        if (prop) {
+          walk(prop->getValue());
+        }
+      }
+    } else if (node->getNodeType() == AST::Function) {
+      auto func = std::static_pointer_cast<FunctionNode>(node);
+      for (const auto &prop : func->getProperties()) {
+        replaceIfAlias(prop, [&](const std::string &name, ASTNode v) {
+          func->replacePropertyValue(name, v);
+        });
+        if (prop) {
+          walk(prop->getValue());
+        }
+      }
+    } else if (node->getNodeType() == AST::Stream) {
+      auto stream = std::static_pointer_cast<StreamNode>(node);
+      walk(stream->getLeft());
+      walk(stream->getRight());
+      return;
+    }
+    const auto children = node->getChildren();
+    for (const auto &child : children) {
+      walk(child);
+    }
+  };
+  walk(m_tree);
+  for (const auto &domain : domainsToAdd) {
+    m_tree->addChild(domain);
+  }
+}
+
+// GPIO -----------------------------------------------------------------------
+//
+// A project's gpioPin declarations are checked against the board named in
+// `use <Platform> on <Board>`, set up once at startup through RootDomain's
+// onLoad, and the DigitalIO modules' `pin:` is filled in with the pin's
+// register addresses and masks. Programs never write those numbers.
+
+namespace {
+
+bool isGpioModuleCall(const std::shared_ptr<FunctionNode> &func) {
+  const auto name = func->getName();
+  if (name != "DigitalOut" && name != "DigitalIn" && name != "Led") {
+    return false;
+  }
+  auto ns = func->getNamespaceList();
+  return ns.empty() || ns.back() == "DigitalIO";
+}
+
+std::string fileStem(const std::string &path) {
+  return std::filesystem::path(path).stem().string();
+}
+
+} // namespace
+
+void CodeResolver::processGpio() {
+  if (!m_system) {
+    return;
+  }
+  // gpioPin declarations: the program's own and every imported file's.
+  std::vector<std::shared_ptr<DeclarationNode>> pinDecls;
+  std::set<const void *> seen;
+  auto collect = [&](const ASTNode &node) {
+    if (node && node->getNodeType() == AST::Declaration) {
+      auto decl = std::static_pointer_cast<DeclarationNode>(node);
+      if (decl->getEntityType() == "gpioPin" && seen.insert(decl.get()).second) {
+        pinDecls.push_back(decl);
+      }
+    }
+  };
+  for (const auto &child : m_tree->getChildren()) {
+    collect(child);
+  }
+  for (const auto &objects : m_system->getImportTrees()) {
+    for (const auto &node : objects.second) {
+      collect(node);
+    }
+  }
+
+  // DigitalIO calls in the program's streams
+  std::vector<std::shared_ptr<StreamNode>> streams;
+  std::function<void(const ASTNode &)> findStreams = [&](const ASTNode &node) {
+    if (!node) {
+      return;
+    }
+    if (node->getNodeType() == AST::Stream) {
+      streams.push_back(std::static_pointer_cast<StreamNode>(node));
+      return;
+    }
+    if (node->getNodeType() == AST::Declaration) {
+      for (const auto &prop :
+           std::static_pointer_cast<DeclarationNode>(node)->getProperties()) {
+        if (prop && prop->getValue() &&
+            prop->getValue()->getNodeType() == AST::List) {
+          for (const auto &item : prop->getValue()->getChildren()) {
+            if (item && item->getNodeType() == AST::Stream) {
+              findStreams(item);
+            }
+          }
+        }
+      }
+    }
+  };
+  for (const auto &child : m_tree->getChildren()) {
+    findStreams(child);
+  }
+  bool usesGpioModules = false;
+  std::function<void(const ASTNode &)> scan = [&](const ASTNode &node) {
+    if (!node || usesGpioModules) {
+      return;
+    }
+    if (node->getNodeType() == AST::Function &&
+        isGpioModuleCall(std::static_pointer_cast<FunctionNode>(node))) {
+      usesGpioModules = true;
+      return;
+    }
+    if (node->getNodeType() == AST::Stream) {
+      auto s = std::static_pointer_cast<StreamNode>(node);
+      scan(s->getLeft());
+      scan(s->getRight());
+    }
+  };
+  for (const auto &s : streams) {
+    scan(s);
+  }
+  if (pinDecls.empty() && !usesGpioModules) {
+    return;
+  }
+
+  auto addError = [&](const std::string &file, int line,
+                      const std::string &message) {
+    LangError error;
+    error.type = LangError::InvalidHardware;
+    error.errorTokens.push_back(message);
+    error.filename = file;
+    error.lineNumber = line;
+    m_errors.push_back(error);
+  };
+
+  // The board
+  auto systems = ASTQuery::getSystemNodes(m_tree);
+  if (systems.empty() || systems.front()->hwPlatforms().empty()) {
+    auto where = pinDecls.empty() ? nullptr : pinDecls.front();
+    addError(where ? where->getFilename() : m_tree->getFilename(),
+             where ? where->getLine() : 0,
+             "gpioPin and the DigitalIO modules need a board: use <Platform> "
+             "version 1.0 on <Board>");
+    return;
+  }
+  auto systemNode = systems.front();
+  const std::string boardName = systemNode->hwPlatforms().front();
+  HardwareResolver hardwareResolver(m_striderootDir);
+  {
+    std::error_code ec;
+    std::filesystem::path programPath = m_tree->getFilename();
+    auto absolute = std::filesystem::absolute(programPath, ec);
+    if (!ec && absolute.has_parent_path()) {
+      hardwareResolver.addSearchDirectory(absolute.parent_path().generic_string());
+    }
+  }
+  std::string resolveError;
+  auto hardware = hardwareResolver.resolve(systemNode->platformName(), boardName,
+                                           &resolveError);
+  if (!hardware) {
+    addError(systemNode->getFilename(), systemNode->getLine(), resolveError);
+    return;
+  }
+
+  // Checks
+  std::vector<GpioPinConfig> configs;
+  for (const auto &decl : pinDecls) {
+    configs.push_back(GpioPinConfig::fromDeclaration(decl));
+  }
+  for (const auto &error : HardwareResolver::checkGpioPins(*hardware, configs)) {
+    addError(error.file, error.line, error.message);
+  }
+  if (!m_errors.empty()) {
+    return;
+  }
+
+  // Startup: RootDomain's onLoad sets every pin up, before any domain runs.
+  auto writes = HardwareResolver::pinSetupWrites(*hardware, configs);
+  if (!writes.empty()) {
+    auto rootDomain = ASTQuery::findDeclarationByName("RootDomain", {}, m_tree, {});
+    if (!rootDomain) {
+      for (const auto &objects : m_system->getImportTrees()) {
+        rootDomain = ASTQuery::findDeclarationByName(
+            "RootDomain", {{nullptr, objects.second}}, nullptr, {});
+        if (rootDomain) {
+          m_tree->addChild(rootDomain);
+          break;
+        }
+      }
+    }
+    if (!rootDomain) {
+      addError(systemNode->getFilename(), systemNode->getLine(),
+               "the framework has no RootDomain to set the pins up in");
+      return;
+    }
+    auto onLoad = rootDomain->getPropertyValue("onLoad");
+    auto list = std::make_shared<ListNode>(__FILE__, __LINE__);
+    if (onLoad && onLoad->getNodeType() == AST::List) {
+      for (const auto &item : onLoad->getChildren()) {
+        list->addChild(item);
+      }
+    }
+    const char *file = __FILE__;
+    for (const auto &w : writes) {
+      auto args = std::make_shared<ListNode>(file, __LINE__);
+      args->addChild(std::make_shared<ValueNode>(int64_t(w.address), file, __LINE__));
+      args->addChild(std::make_shared<ValueNode>(int64_t(w.clearMask), file, __LINE__));
+      args->addChild(std::make_shared<ValueNode>(int64_t(w.setBits), file, __LINE__));
+      args->addChild(std::make_shared<ValueNode>(w.readModify, file, __LINE__));
+      auto call = std::make_shared<FunctionNode>("_GpioModify", nullptr, file, __LINE__);
+      list->addChild(std::make_shared<StreamNode>(args, call, file, __LINE__));
+    }
+    if (onLoad) {
+      rootDomain->replacePropertyValue("onLoad", list);
+    } else {
+      rootDomain->addProperty(
+          std::make_shared<PropertyNode>("onLoad", list, file, __LINE__));
+    }
+  }
+
+  // DigitalIO calls: pin: becomes the pin's addresses and masks.
+  auto findPin = [&](const ASTNode &ref) -> int {
+    if (!ref || ref->getNodeType() != AST::Entity) {
+      return -1;
+    }
+    auto name = ASTQuery::getNodeName(ref);
+    auto ns = ref->getNamespaceList();
+    for (size_t i = 0; i < pinDecls.size(); ++i) {
+      if (pinDecls[i]->getName() != name) {
+        continue;
+      }
+      if (ns.empty() || fileStem(pinDecls[i]->getFilename()) == ns.back()) {
+        return static_cast<int>(i);
+      }
+    }
+    return -1;
+  };
+  auto expand = [&](const std::shared_ptr<FunctionNode> &func,
+                    const ASTNode &pinRef) {
+    int index = findPin(pinRef);
+    if (index < 0) {
+      std::string text = pinRef ? ASTQuery::getNodeName(pinRef) : "nothing";
+      addError(func->getFilename(), func->getLine(),
+               func->getName() + "'s pin: must name a gpioPin, not " + text);
+      return;
+    }
+    const auto &config = configs[index];
+    const bool reads = func->getName() == "DigitalIn";
+    if (!reads && config.mode != "PinOutput") {
+      addError(func->getFilename(), func->getLine(),
+               func->getName() + " drives gpioPin " + config.name +
+                   ", whose mode is " + config.mode +
+                   ". Only a Gpio::PinOutput pin can be driven");
+      return;
+    }
+    if (reads && config.mode != "PinInput" && config.mode != "PinOutput") {
+      addError(func->getFilename(), func->getLine(),
+               "DigitalIn reads gpioPin " + config.name + ", whose mode is " +
+                   config.mode + ". Only Gpio::PinInput and Gpio::PinOutput pins "
+                   "can be read");
+      return;
+    }
+    auto access = HardwareResolver::resolvePinAccess(*hardware, config);
+    if (!access) {
+      return;
+    }
+    // Drop pin:, add the numbers
+    std::vector<ASTNode> kept;
+    for (const auto &child : func->getChildren()) {
+      if (child && child->getNodeType() == AST::Property &&
+          std::static_pointer_cast<PropertyNode>(child)->getName() == "pin") {
+        continue;
+      }
+      kept.push_back(child);
+    }
+    func->setChildren(kept);
+    const char *file = func->getFilename().c_str();
+    int line = func->getLine();
+    auto setInt = [&](const char *key, int64_t value) {
+      func->setPropertyValue(key, std::make_shared<ValueNode>(value, file, line));
+    };
+    auto setSwitch = [&](const char *key, bool value) {
+      func->setPropertyValue(key, std::make_shared<ValueNode>(value, file, line));
+    };
+    if (reads) {
+      setInt("inAddress", access->inAddress);
+      setInt("inMask", access->inMask);
+      setSwitch("invert", access->invert);
+      return;
+    }
+    if (access->openDrainEmulated) {
+      // Released (high) clears the direction bit, low sets it: the level is
+      // written inverted to the direction register.
+      setInt("setAddress", access->dirAddress);
+      setInt("clearAddress", access->dirAddress);
+      setInt("setMask", access->dirMask);
+      setInt("clearMask", access->dirMask);
+      setSwitch("readModify", true);
+      setSwitch("invert", !access->invert);
+    } else {
+      setInt("setAddress", access->setAddress);
+      setInt("clearAddress", access->clearAddress);
+      setInt("setMask", access->setMask);
+      setInt("clearMask", access->clearMask);
+      setSwitch("readModify", access->writeStyle != "WriteSetClear");
+      setSwitch("invert", access->invert);
+    }
+  };
+
+  std::function<void(const ASTNode &)> rewrite = [&](const ASTNode &node) {
+    if (!node || node->getNodeType() != AST::Stream) {
+      return;
+    }
+    auto stream = std::static_pointer_cast<StreamNode>(node);
+    // Rig::Button >> DigitalIn() >> X  becomes  DigitalIn(pin: Rig::Button) >> X
+    auto left = stream->getLeft();
+    auto right = stream->getRight();
+    ASTNode next = right && right->getNodeType() == AST::Stream
+                       ? std::static_pointer_cast<StreamNode>(right)->getLeft()
+                       : right;
+    if (left && left->getNodeType() == AST::Entity && findPin(left) >= 0 && next &&
+        next->getNodeType() == AST::Function) {
+      auto func = std::static_pointer_cast<FunctionNode>(next);
+      if (isGpioModuleCall(func) && func->getName() == "DigitalIn" &&
+          !func->getPropertyValue("pin") &&
+          right->getNodeType() == AST::Stream) {
+        expand(func, left);
+        stream->setLeft(func);
+        stream->setRight(std::static_pointer_cast<StreamNode>(right)->getRight());
+        rewrite(stream);
+        return;
+      }
+    }
+    for (const auto &part : {stream->getLeft(), stream->getRight()}) {
+      if (part && part->getNodeType() == AST::Function) {
+        auto func = std::static_pointer_cast<FunctionNode>(part);
+        if (isGpioModuleCall(func)) {
+          if (auto pinRef = func->getPropertyValue("pin")) {
+            expand(func, pinRef);
+          } else if (!func->getPropertyValue("inAddress") &&
+                     !func->getPropertyValue("setAddress")) {
+            addError(func->getFilename(), func->getLine(),
+                     func->getName() + " needs pin: with a gpioPin");
+          }
+        }
+      }
+    }
+    rewrite(stream->getRight());
+  };
+  for (const auto &s : streams) {
+    rewrite(s);
   }
 }
 
