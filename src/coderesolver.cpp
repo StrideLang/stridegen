@@ -6269,6 +6269,14 @@ void CodeResolver::resolveTypeCastForStream(std::shared_ptr<StreamNode> stream,
       std::string resolvedType;
       bool needsResolution = false;
       bool validNumericList = true;
+      // A non-negative integer literal takes the type of the other values
+      // when it fits it ([UInt32Signal, 255] stays UInt32), as it does in an
+      // expression; otherwise it promotes like any value
+      auto freeLiteral = [](const ASTNode &node) {
+        return node->getNodeType() == AST::Int &&
+               std::static_pointer_cast<ValueNode>(node)->getIntValue() >= 0;
+      };
+      std::vector<ASTNode> literals;
       for (const auto &listNode : left->getChildren()) {
         auto nodeType =
             CodeAnalysis::resolveNodeOutDataType(listNode, scopeStack, tree);
@@ -6276,12 +6284,39 @@ void CodeResolver::resolveTypeCastForStream(std::shared_ptr<StreamNode> stream,
           validNumericList = false;
           break;
         }
+        if (freeLiteral(listNode)) {
+          literals.push_back(listNode);
+          continue;
+        }
         if (resolvedType.size() == 0) {
           resolvedType = nodeType;
         } else if (nodeType != resolvedType) {
           resolvedType = DataTypes::promote(resolvedType, nodeType, tree);
           needsResolution = true;
         }
+      }
+      for (const auto &literal : literals) {
+        auto nodeType =
+            CodeAnalysis::resolveNodeOutDataType(literal, scopeStack, tree);
+        if (resolvedType.empty()) {
+          resolvedType = nodeType;
+          continue;
+        }
+        if (nodeType == resolvedType) {
+          continue;
+        }
+        const auto info = DataTypes::resolve(resolvedType, tree);
+        const int64_t value =
+            std::static_pointer_cast<ValueNode>(literal)->getIntValue();
+        bool fits = !info.isInteger();
+        if (info.isInteger()) {
+          const unsigned bits = info.isSigned ? info.bits - 1 : info.bits;
+          fits = bits >= 63 || value <= ((int64_t(1) << bits) - 1);
+        }
+        if (!fits) {
+          resolvedType = DataTypes::promote(resolvedType, nodeType, tree);
+        }
+        needsResolution = true;
       }
       if (needsResolution && validNumericList &&
           left->getNodeType() == AST::Expression) {

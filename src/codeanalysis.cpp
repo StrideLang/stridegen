@@ -3049,6 +3049,9 @@ std::shared_ptr<DeclarationNode> CodeAnalysis::matchDefinitionToTypes(
 
   // Gather actual input data types from func's mainInput
   std::vector<std::string> actualTypes;
+  // The inputs themselves, where known: a literal fits more types than its
+  // own (255 fits a UInt32 input)
+  std::vector<ASTNode> actualNodes;
   bool hasStreamInput = false;
   auto streamInput = func ? func->getCompilerProperty("mainInput") : nullptr;
   auto resolveInputType = [&](const ASTNode &node) -> std::string {
@@ -3116,9 +3119,11 @@ std::shared_ptr<DeclarationNode> CodeAnalysis::matchDefinitionToTypes(
     if (streamInput->getNodeType() == AST::List) {
       for (const auto &child : streamInput->getChildren()) {
         actualTypes.push_back(resolveInputType(child));
+        actualNodes.push_back(child);
       }
     } else {
       actualTypes.push_back(resolveInputType(streamInput));
+      actualNodes.push_back(streamInput);
     }
   } else if (func) {
     // If mainInput was not set, trace upstream connection using
@@ -3135,6 +3140,17 @@ std::shared_ptr<DeclarationNode> CodeAnalysis::matchDefinitionToTypes(
     }
   }
 
+  // A non-negative integer literal converts to any integer type: [UInt32
+  // signal, 255] is an unsigned comparison, not a real one
+  auto literalFits = [&](size_t i, const std::string &expected) {
+    if (i >= actualNodes.size() || !actualNodes[i] ||
+        actualNodes[i]->getNodeType() != AST::Int) {
+      return false;
+    }
+    auto literal = std::static_pointer_cast<ValueNode>(actualNodes[i]);
+    return literal->getIntValue() >= 0 &&
+           DataTypes::resolve(expected, tree).isInteger();
+  };
   auto scoreCandidate =
       [&](const std::shared_ptr<DeclarationNode> &decl) -> int {
     if (decl->getEntityType() != "platformModule") {
@@ -3187,7 +3203,8 @@ std::shared_ptr<DeclarationNode> CodeAnalysis::matchDefinitionToTypes(
           score += 1;
         } else if (actual == expected) {
           score += 10;
-        } else if (DataTypes::implicitlyConvertible(actual, expected, tree)) {
+        } else if (DataTypes::implicitlyConvertible(actual, expected, tree) ||
+                   literalFits(i, expected)) {
           score += 5; // e.g. Int to Real promotion
         } else {
           return -1; // incompatible type
@@ -3207,7 +3224,8 @@ std::shared_ptr<DeclarationNode> CodeAnalysis::matchDefinitionToTypes(
         score += 1;
       } else if (actual == expected) {
         score += 10;
-      } else if (DataTypes::implicitlyConvertible(actual, expected, tree)) {
+      } else if (DataTypes::implicitlyConvertible(actual, expected, tree) ||
+                 literalFits(i, expected)) {
         score += 5;
       } else {
         return -1;
