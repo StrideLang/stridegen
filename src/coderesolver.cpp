@@ -135,6 +135,7 @@ void CodeResolver::process() {
   processSystem();
   resolveDomainAliases();
   processGpio();
+  declarePlatformConstants();
   if (!m_errors.empty()) {
     return; // the tree can't be compiled; the caller reports m_errors
   }
@@ -607,6 +608,61 @@ std::string fileStem(const std::string &path) {
 }
 
 } // namespace
+
+void CodeResolver::declarePlatformConstants() {
+  auto systems = ASTQuery::getSystemNodes(m_tree);
+  if (systems.empty() || systems.front()->hwPlatforms().empty()) {
+    return; // No board: nothing to declare
+  }
+  // The program may declare it itself (a test, or a board without a clock)
+  const std::string name = "PlatformClockFrequency";
+  for (const auto &child : m_tree->getChildren()) {
+    if (child->getNodeType() == AST::Declaration &&
+        std::static_pointer_cast<DeclarationNode>(child)->getName() == name) {
+      return;
+    }
+  }
+  auto systemNode = systems.front();
+  HardwareResolver hardwareResolver(m_striderootDir);
+  {
+    std::error_code ec;
+    std::filesystem::path programPath = m_tree->getFilename();
+    auto absolute = std::filesystem::absolute(programPath, ec);
+    if (!ec && absolute.has_parent_path()) {
+      hardwareResolver.addSearchDirectory(
+          absolute.parent_path().generic_string());
+    }
+  }
+  std::string resolveError;
+  auto hardware = hardwareResolver.resolve(
+      systemNode->platformName(), systemNode->hwPlatforms().front(),
+      &resolveError);
+  if (!hardware) {
+    return; // processGpio reports a board it needs and can't find
+  }
+  auto clock = hardware->intProperty("clock");
+  if (!clock) {
+    return;
+  }
+  // The same value the build passes to C as F_CPU. UInt32: Int is 16 bits
+  // on AVR, and fills compute with the target's types.
+  const std::string fileName = systemNode->getFilename();
+  const char *file = fileName.c_str();
+  const int line = systemNode->getLine();
+  auto properties = std::make_shared<ListNode>(file, line);
+  properties->addChild(std::make_shared<PropertyNode>(
+      "value", std::make_shared<ValueNode>(*clock, file, line), file, line));
+  properties->addChild(std::make_shared<PropertyNode>(
+      "type", std::make_shared<EntityNode>("UInt32", file, line), file, line));
+  properties->addChild(std::make_shared<PropertyNode>(
+      "meta",
+      std::make_shared<ValueNode>(
+          std::string("The core clock in Hz, from the board (or its device)"),
+          file, line),
+      file, line));
+  m_tree->addChild(std::make_shared<DeclarationNode>(name, "constant",
+                                                     properties, file, line));
+}
 
 void CodeResolver::processGpio() {
   if (!m_system) {

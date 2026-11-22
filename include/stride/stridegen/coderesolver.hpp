@@ -75,6 +75,9 @@ private:
   // Checks gpioPin declarations against the board, sets the pins up in
   // RootDomain's onLoad and fills the DigitalIO modules' pin: in.
   void processGpio();
+  // Declares the board's facts as constants the program can compute with
+  // while compiling: PlatformClockFrequency, the core clock in Hz.
+  void declarePlatformConstants();
   void resolvePolicyVariants();
   void resolvePolicyVariantsForNode(
       ASTNode node, std::shared_ptr<DeclarationNode> activeDomain,
