@@ -3151,6 +3151,16 @@ std::shared_ptr<DeclarationNode> CodeAnalysis::matchDefinitionToTypes(
     return literal->getIntValue() >= 0 &&
            DataTypes::resolve(expected, tree).isInteger();
   };
+  // Widening an integer (or a literal that fits) beats turning it into a
+  // real: [UInt16, 255] compares as unsigned integers, not as floats, which
+  // on a target without an FPU are a software routine
+  auto conversionScore = [&](size_t i, const std::string &actual,
+                             const std::string &expected) {
+    const auto to = DataTypes::resolve(expected, tree);
+    const bool fromInteger = literalFits(i, expected) ||
+                             DataTypes::resolve(actual, tree).isInteger();
+    return fromInteger && !to.isInteger() ? 3 : 5;
+  };
   auto scoreCandidate =
       [&](const std::shared_ptr<DeclarationNode> &decl) -> int {
     if (decl->getEntityType() != "platformModule") {
@@ -3203,9 +3213,9 @@ std::shared_ptr<DeclarationNode> CodeAnalysis::matchDefinitionToTypes(
           score += 1;
         } else if (actual == expected) {
           score += 10;
-        } else if (DataTypes::implicitlyConvertible(actual, expected, tree) ||
-                   literalFits(i, expected)) {
-          score += 5; // e.g. Int to Real promotion
+        } else if (literalFits(i, expected) ||
+                   DataTypes::implicitlyConvertible(actual, expected, tree)) {
+          score += conversionScore(i, actual, expected);
         } else {
           return -1; // incompatible type
         }
@@ -3224,9 +3234,9 @@ std::shared_ptr<DeclarationNode> CodeAnalysis::matchDefinitionToTypes(
         score += 1;
       } else if (actual == expected) {
         score += 10;
-      } else if (DataTypes::implicitlyConvertible(actual, expected, tree) ||
-                 literalFits(i, expected)) {
-        score += 5;
+      } else if (literalFits(i, expected) ||
+                 DataTypes::implicitlyConvertible(actual, expected, tree)) {
+        score += conversionScore(i, actual, expected);
       } else {
         return -1;
       }
