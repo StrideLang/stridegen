@@ -29,13 +29,13 @@
 #include "stride/stridegen/coderesolver.hpp"
 
 #include "stride/parser/arraynode.h"
+#include "stride/parser/functionnode.h"
 #include "stride/parser/generatorrangenode.h"
-#include "stride/parser/rangenode.h"
-#include "stride/parser/valuenode.h"
 #include "stride/parser/listnode.h"
 #include "stride/parser/propertynode.h"
+#include "stride/parser/rangenode.h"
 #include "stride/parser/streamnode.h"
-#include "stride/parser/functionnode.h"
+#include "stride/parser/valuenode.h"
 #include "stride/stridegen/hardwareresolver.hpp"
 #include "stride/utils/astfunctions.h"
 #include "stride/utils/astquery.h"
@@ -99,8 +99,8 @@ CodeResolver::CodeResolver(ASTNode tree, std::string striderootDir,
     std::shared_ptr<SystemNode> platformNode = systems.at(0);
     m_system = std::make_shared<StrideSystem>(
         striderootDir, platformNode->platformName(),
-        platformNode->majorVersion(), platformNode->minorVersion(),
-        importList, m_featureConfig, includePaths);
+        platformNode->majorVersion(), platformNode->minorVersion(), importList,
+        m_featureConfig, includePaths);
     m_system->m_systemConfig = systemConfig;
 
     std::string targetDev;
@@ -120,9 +120,8 @@ CodeResolver::CodeResolver(ASTNode tree, std::string striderootDir,
       //      m_errors.append(error);
     }
   } else { // Make a default platform that only inlcudes the common library
-    m_system = std::make_shared<StrideSystem>(striderootDir, "", -1, -1,
-                                              importList, m_featureConfig,
-                                              includePaths);
+    m_system = std::make_shared<StrideSystem>(
+        striderootDir, "", -1, -1, importList, m_featureConfig, includePaths);
     // TODO is it Ok to assume JIT for all missing cases? It seems very
     // practical.
     m_policyManager.loadPlatform(striderootDir, "JIT", "");
@@ -162,8 +161,8 @@ void CodeResolver::process() {
   expandValueRanges();
   resolveDeclarationSymbols();
   expandIndexedStreams();
-  expandParallel(); // Find better name this expands bundles, functions and
-                    // declares undefined bundles
+  expandParallel(); // Find better name this expands arrays, functions and
+                    // declares undefined arrays
                     //    processResets();
   resolveStreamSymbols();
 
@@ -421,9 +420,8 @@ void CodeResolver::processSystem() {
       }
       bool imported = false;
       for (const auto &importNode : importList) {
-        if ((ASTQuery::getImportPath(
-                 std::static_pointer_cast<ImportNode>(importNode)) ==
-             ASTQuery::getImportPath(import)) &&
+        if ((ASTQuery::getImportPath(std::static_pointer_cast<ImportNode>(
+                 importNode)) == ASTQuery::getImportPath(import)) &&
             (std::static_pointer_cast<ImportNode>(importNode)->importAlias() ==
              import->importAlias())) {
           imported = true;
@@ -474,8 +472,8 @@ void CodeResolver::resolveDomainAliases() {
     return;
   }
   auto importTrees = m_system->getImportTrees();
-  auto findDecl = [&](const std::string &name)
-      -> std::shared_ptr<DeclarationNode> {
+  auto findDecl =
+      [&](const std::string &name) -> std::shared_ptr<DeclarationNode> {
     if (auto decl = ASTQuery::findDeclarationByName(name, {}, m_tree)) {
       return decl;
     }
@@ -489,8 +487,8 @@ void CodeResolver::resolveDomainAliases() {
   };
   // Follows an alias chain such as PlatformLoopDomain -> AvrLoopDomain to the
   // domain it stands for. Only names that start at an alias are resolved.
-  auto aliasedDomain = [&](const std::string &name)
-      -> std::shared_ptr<DeclarationNode> {
+  auto aliasedDomain =
+      [&](const std::string &name) -> std::shared_ptr<DeclarationNode> {
     auto decl = findDecl(name);
     if (!decl || decl->getEntityType() != "alias") {
       return nullptr;
@@ -516,8 +514,8 @@ void CodeResolver::resolveDomainAliases() {
   std::vector<std::shared_ptr<DeclarationNode>> domainsToAdd;
   auto replaceIfAlias = [&](const std::shared_ptr<PropertyNode> &prop,
                             auto &&replace) {
-    if (!prop || (prop->getName() != "domain" &&
-                  prop->getName() != "parentDomain")) {
+    if (!prop ||
+        (prop->getName() != "domain" && prop->getName() != "parentDomain")) {
       return;
     }
     auto value = prop->getValue();
@@ -634,9 +632,9 @@ void CodeResolver::declarePlatformConstants() {
     }
   }
   std::string resolveError;
-  auto hardware = hardwareResolver.resolve(
-      systemNode->platformName(), systemNode->hwPlatforms().front(),
-      &resolveError);
+  auto hardware = hardwareResolver.resolve(systemNode->platformName(),
+                                           systemNode->hwPlatforms().front(),
+                                           &resolveError);
   if (!hardware) {
     return; // processGpio reports a board it needs and can't find
   }
@@ -674,7 +672,8 @@ void CodeResolver::processGpio() {
   auto collect = [&](const ASTNode &node) {
     if (node && node->getNodeType() == AST::Declaration) {
       auto decl = std::static_pointer_cast<DeclarationNode>(node);
-      if (decl->getEntityType() == "gpioPin" && seen.insert(decl.get()).second) {
+      if (decl->getEntityType() == "gpioPin" &&
+          seen.insert(decl.get()).second) {
         pinDecls.push_back(decl);
       }
     }
@@ -766,12 +765,13 @@ void CodeResolver::processGpio() {
     std::filesystem::path programPath = m_tree->getFilename();
     auto absolute = std::filesystem::absolute(programPath, ec);
     if (!ec && absolute.has_parent_path()) {
-      hardwareResolver.addSearchDirectory(absolute.parent_path().generic_string());
+      hardwareResolver.addSearchDirectory(
+          absolute.parent_path().generic_string());
     }
   }
   std::string resolveError;
-  auto hardware = hardwareResolver.resolve(systemNode->platformName(), boardName,
-                                           &resolveError);
+  auto hardware = hardwareResolver.resolve(systemNode->platformName(),
+                                           boardName, &resolveError);
   if (!hardware) {
     addError(systemNode->getFilename(), systemNode->getLine(), resolveError);
     return;
@@ -782,7 +782,8 @@ void CodeResolver::processGpio() {
   for (const auto &decl : pinDecls) {
     configs.push_back(GpioPinConfig::fromDeclaration(decl));
   }
-  for (const auto &error : HardwareResolver::checkGpioPins(*hardware, configs)) {
+  for (const auto &error :
+       HardwareResolver::checkGpioPins(*hardware, configs)) {
     addError(error.file, error.line, error.message);
   }
   if (!m_errors.empty()) {
@@ -792,7 +793,8 @@ void CodeResolver::processGpio() {
   // Startup: RootDomain's onLoad sets every pin up, before any domain runs.
   auto writes = HardwareResolver::pinSetupWrites(*hardware, configs);
   if (!writes.empty()) {
-    auto rootDomain = ASTQuery::findDeclarationByName("RootDomain", {}, m_tree, {});
+    auto rootDomain =
+        ASTQuery::findDeclarationByName("RootDomain", {}, m_tree, {});
     if (!rootDomain) {
       for (const auto &objects : m_system->getImportTrees()) {
         rootDomain = ASTQuery::findDeclarationByName(
@@ -818,11 +820,15 @@ void CodeResolver::processGpio() {
     const char *file = __FILE__;
     for (const auto &w : writes) {
       auto args = std::make_shared<ListNode>(file, __LINE__);
-      args->addChild(std::make_shared<ValueNode>(int64_t(w.address), file, __LINE__));
-      args->addChild(std::make_shared<ValueNode>(int64_t(w.clearMask), file, __LINE__));
-      args->addChild(std::make_shared<ValueNode>(int64_t(w.setBits), file, __LINE__));
+      args->addChild(
+          std::make_shared<ValueNode>(int64_t(w.address), file, __LINE__));
+      args->addChild(
+          std::make_shared<ValueNode>(int64_t(w.clearMask), file, __LINE__));
+      args->addChild(
+          std::make_shared<ValueNode>(int64_t(w.setBits), file, __LINE__));
       args->addChild(std::make_shared<ValueNode>(w.readModify, file, __LINE__));
-      auto call = std::make_shared<FunctionNode>("_GpioModify", nullptr, file, __LINE__);
+      auto call = std::make_shared<FunctionNode>("_GpioModify", nullptr, file,
+                                                 __LINE__);
       list->addChild(std::make_shared<StreamNode>(args, call, file, __LINE__));
     }
     if (onLoad) {
@@ -860,7 +866,8 @@ void CodeResolver::processGpio() {
       if (pinDecls[i]->getName() != name) {
         continue;
       }
-      if (qualifier.empty() || fileStem(pinDecls[i]->getFilename()) == qualifier) {
+      if (qualifier.empty() ||
+          fileStem(pinDecls[i]->getFilename()) == qualifier) {
         return static_cast<int>(i);
       }
     }
@@ -887,7 +894,8 @@ void CodeResolver::processGpio() {
     if (reads && config.mode != "PinInput" && config.mode != "PinOutput") {
       addError(func->getFilename(), func->getLine(),
                "DigitalIn reads gpioPin " + config.name + ", whose mode is " +
-                   config.mode + ". Only Gpio::PinInput and Gpio::PinOutput pins "
+                   config.mode +
+                   ". Only Gpio::PinInput and Gpio::PinOutput pins "
                    "can be read");
       return;
     }
@@ -908,10 +916,12 @@ void CodeResolver::processGpio() {
     const char *file = func->getFilename().c_str();
     int line = func->getLine();
     auto setInt = [&](const char *key, int64_t value) {
-      func->setPropertyValue(key, std::make_shared<ValueNode>(value, file, line));
+      func->setPropertyValue(key,
+                             std::make_shared<ValueNode>(value, file, line));
     };
     auto setSwitch = [&](const char *key, bool value) {
-      func->setPropertyValue(key, std::make_shared<ValueNode>(value, file, line));
+      func->setPropertyValue(key,
+                             std::make_shared<ValueNode>(value, file, line));
     };
     if (reads) {
       setInt("inAddress", access->inAddress);
@@ -943,21 +953,23 @@ void CodeResolver::processGpio() {
       return;
     }
     auto stream = std::static_pointer_cast<StreamNode>(node);
-    // Rig::Button >> DigitalIn() >> X  becomes  DigitalIn(pin: Rig::Button) >> X
+    // Rig::Button >> DigitalIn() >> X  becomes  DigitalIn(pin: Rig::Button) >>
+    // X
     auto left = stream->getLeft();
     auto right = stream->getRight();
     ASTNode next = right && right->getNodeType() == AST::Stream
                        ? std::static_pointer_cast<StreamNode>(right)->getLeft()
                        : right;
-    if (left && left->getNodeType() == AST::Entity && findPin(left) >= 0 && next &&
-        next->getNodeType() == AST::Function) {
+    if (left && left->getNodeType() == AST::Entity && findPin(left) >= 0 &&
+        next && next->getNodeType() == AST::Function) {
       auto func = std::static_pointer_cast<FunctionNode>(next);
       if (isGpioModuleCall(func) && func->getName() == "DigitalIn" &&
           !func->getPropertyValue("pin") &&
           right->getNodeType() == AST::Stream) {
         expand(func, left);
         stream->setLeft(func);
-        stream->setRight(std::static_pointer_cast<StreamNode>(right)->getRight());
+        stream->setRight(
+            std::static_pointer_cast<StreamNode>(right)->getRight());
         rewrite(stream);
         return;
       }
@@ -1048,10 +1060,9 @@ void CodeResolver::resolveStreamRatesReverse(std::shared_ptr<StreamNode> stream,
   }
   double rate = CodeAnalysis::getNodeRate(left, scope, tree);
   double rightRate = -1;
-  ASTNode rightTarget =
-      (right->getNodeType() == AST::Stream)
-          ? static_cast<StreamNode *>(right.get())->getLeft()
-          : right;
+  ASTNode rightTarget = (right->getNodeType() == AST::Stream)
+                            ? static_cast<StreamNode *>(right.get())->getLeft()
+                            : right;
   if (right->getNodeType() == AST::Stream) {
     resolveStreamRatesReverse(std::static_pointer_cast<StreamNode>(right),
                               scope, tree);
@@ -1129,10 +1140,11 @@ void CodeResolver::resolveStreamRates(std::shared_ptr<StreamNode> stream,
     bool rightAdaptsInputRate =
         rightLeft && rightLeft->getNodeType() == AST::Function &&
         CodeAnalysis::getModulePortRate(
-            std::static_pointer_cast<FunctionNode>(rightLeft),
-            "mainInputPort", scope, m_tree) >= 0;
+            std::static_pointer_cast<FunctionNode>(rightLeft), "mainInputPort",
+            scope, m_tree) >= 0;
     if (rightRate < 0 && rate >= 0 && !rightAdaptsInputRate) {
-      std::string leftDom = CodeAnalysis::getNodeDomainName(left, scope, m_tree);
+      std::string leftDom =
+          CodeAnalysis::getNodeDomainName(left, scope, m_tree);
       std::string rightDom =
           CodeAnalysis::getNodeDomainName(rightLeft, scope, m_tree);
       if (leftDom.empty() || rightDom.empty() || leftDom == rightDom) {
@@ -1202,7 +1214,7 @@ void CodeResolver::resolveStreamTypesReverse(std::shared_ptr<StreamNode> stream,
     rightTypes = CodeAnalysis::getInputDataTypes(right, stack, tree);
   }
   if (rightTypes.size() == types.size()) {
-    // TODO support lists, expressions and bundle ranges
+    // TODO support lists, expressions and array ranges
     for (int i = 0; i < rightTypes.size(); i++) {
       if (rightTypes[i] && (rightTypes[i] != nullptr &&
                             rightTypes[i]->getNodeType()) != AST::None) {
@@ -1288,7 +1300,7 @@ void CodeResolver::resolveStreamTypesForward(std::shared_ptr<StreamNode> stream,
                                     tree);
         }
       } else {
-        // TODO support bundle ranges
+        // TODO support array ranges
         if (types.size() == 1 && types[0] != nullptr) {
           CodeResolver::setNodeType(right, types[0], scope, tree);
         } else if (right->getChildren().size() == types.size()) {
@@ -1387,8 +1399,7 @@ void resolvePersistenceRecursive(ASTNode streamsList, ScopeStack &scope,
         if (it != state.constWrittenIndices.end() && !it->second.empty()) {
           int declSize =
               ASTQuery::getEntityDeclaredSize(decl, scope, tree, nullptr);
-          if (declSize <= 0 ||
-              static_cast<int>(it->second.size()) < declSize) {
+          if (declSize <= 0 || static_cast<int>(it->second.size()) < declSize) {
             markPersistent(decl);
           }
         }
@@ -1733,8 +1744,8 @@ void CodeResolver::expandParallelStream(std::shared_ptr<StreamNode> stream,
 }
 
 void CodeResolver::processDeclarations() {
-  //    For block and bundle declarations move streams and blocks outside
-  //    properties to the "streams" and "blocks" properties
+  //    For entity and array declarations move streams and entities outside
+  //    properties to the "streams" and "entities" properties
 
   std::function<void(std::vector<ASTNode>)> processDeclarationsForTree =
       [&](std::vector<ASTNode> children) {
@@ -1973,13 +1984,13 @@ static ASTNode expandRangesInASTNode(ASTNode node, const ScopeStack &scope,
 
 // Automatic broadcasting: decides whether a call written F() runs as several
 // instances, as if written F[](). A function that takes W values (W > 1),
-// given a list of W items where some are bundles of width N and the others
+// given a list of W items where some are arrays of width N and the others
 // single values, runs N times; single values are repeated for each
 // instance. A function that takes one value, given N values, runs N times.
-// Whole bundles named without a range count with their declared size.
+// Whole arrays named without a range count with their declared size.
 // Returns the number of instances, or 0 to leave the call as it is (also
 // when widths do not match, which the validator reports). On a broadcast,
-// left is rewritten with bundles as lists of their elements.
+// left is rewritten with arrays as lists of their elements.
 static int64_t autoBroadcastCount(ASTNode &left,
                                   std::shared_ptr<FunctionNode> funcNode,
                                   const ScopeStack &scope, ASTNode tree) {
@@ -2059,7 +2070,7 @@ static int64_t autoBroadcastCount(ASTNode &left,
     for (int64_t width : widths) {
       if (width > 1) {
         if (count > 1 && width != count) {
-          // Bundles of different widths: CodeValidator reports it
+          // Arrays of different widths: CodeValidator reports it
           auto widthsNode = std::make_shared<ListNode>(
               std::make_shared<ValueNode>(
                   count, funcNode->getFilename().c_str(), funcNode->getLine()),
@@ -2084,7 +2095,7 @@ static int64_t autoBroadcastCount(ASTNode &left,
 }
 
 // Expands a stream through a multi-instance function (F[]()) into one stream
-// per instance. Bundles the caller must declare (name, size) to hold the
+// per instance. Arrays the caller must declare (name, size) to hold the
 // instance outputs are appended to newBundles.
 static std::vector<ASTNode> expandSingleIndexedStream(
     std::shared_ptr<StreamNode> stream, const ScopeStack &scope, ASTNode tree,
@@ -2168,8 +2179,8 @@ static std::vector<ASTNode> expandSingleIndexedStream(
 
   // The stream may continue after the instance outputs, e.g.
   //   In >> F[]() >> Out[0:8] >> G() >> X;  or  In >> F[]() >> G() >> X;
-  // Each instance writes one element of Out (or of a new bundle when a
-  // function follows), and one more stream continues from the whole bundle.
+  // Each instance writes one element of Out (or of a new array when a
+  // function follows), and one more stream continues from the whole array.
   ASTNode tailHead = nullptr;
   ASTNode tailRest = nullptr;
   if (outNode && outNode->getNodeType() == AST::Stream) {
@@ -2179,10 +2190,10 @@ static std::vector<ASTNode> expandSingleIndexedStream(
   } else if (outNode && outNode->getNodeType() == AST::Function) {
     tailHead = outNode;
   }
-  const bool outputsToBundle =
+  const bool outputsToArrays =
       tailHead && tailHead->getNodeType() == AST::Function;
   if (tailHead) {
-    outNode = outputsToBundle ? nullptr
+    outNode = outputsToArrays ? nullptr
                               : expandRangesInASTNode(tailHead, scope, tree);
   }
 
@@ -2209,7 +2220,7 @@ static std::vector<ASTNode> expandSingleIndexedStream(
       }
     }
   } else if (left && left->getNodeType() == AST::Array) {
-    // Single bundle on left (e.g. InA[0:2] before list conversion)
+    // Single array on left (e.g. InA[0:2] before list conversion)
     int s = CodeAnalysis::getNodeNumOutputs(left, scope, tree, nullptr);
     if (s > N)
       N = s;
@@ -2315,9 +2326,9 @@ static std::vector<ASTNode> expandSingleIndexedStream(
   int64_t currentGroupId = ++s_parallelGroupId;
   std::string originFuncName = funcNode->getName();
 
-  // Bundle holding the instance outputs when a function follows them
+  // Array holding the instance outputs when a function follows them
   std::shared_ptr<ListNode> bundleElements;
-  if (outputsToBundle) {
+  if (outputsToArrays) {
     std::string bundleName =
         "__" + originFuncName + "_Out" + std::to_string(currentGroupId);
     newBundles.push_back({bundleName, N});
@@ -2402,9 +2413,9 @@ static std::vector<ASTNode> expandSingleIndexedStream(
   }
 
   // Continue the stream from the whole output bundle
-  if (outputsToBundle || tailRest) {
+  if (outputsToArrays || tailRest) {
     std::shared_ptr<StreamNode> continuation;
-    if (outputsToBundle) {
+    if (outputsToArrays) {
       ASTNode rest = tailHead;
       if (tailRest) {
         rest = std::make_shared<StreamNode>(tailHead, tailRest,
@@ -3299,7 +3310,8 @@ void CodeResolver::analyzePersistence() {
         markNodePersistence(streamsList, blocksList, scope, m_tree);
         scope.pop_back();
       }
-    } else if (!rootStreamsAnalyzed && child && child->getNodeType() == AST::Stream) {
+    } else if (!rootStreamsAnalyzed && child &&
+               child->getNodeType() == AST::Stream) {
       markNodePersistence(m_tree, nullptr, scope, m_tree);
       rootStreamsAnalyzed = true;
     }
@@ -3365,7 +3377,8 @@ void CodeResolver::analyzeContainerStreamDependencies(
 
       if (node->getNodeType() == AST::Function) {
         auto funcNode = std::static_pointer_cast<FunctionNode>(node);
-        auto funcDecl = ASTQuery::findDeclarationForNode(funcNode, scope, m_tree);
+        auto funcDecl =
+            ASTQuery::findDeclarationForNode(funcNode, scope, m_tree);
         if (funcDecl && funcDecl->getEntityType() == "_domainDefinition") {
           info.isSubdomainCall = true;
         }
@@ -3423,8 +3436,8 @@ void CodeResolver::analyzeContainerStreamDependencies(
 
   for (size_t j = 0; j < streamInfos.size(); j++) {
     for (size_t i = 0; i < j; i++) {
-      bool hasDep = streamInfos[i].isSubdomainCall ||
-                    streamInfos[j].isSubdomainCall;
+      bool hasDep =
+          streamInfos[i].isSubdomainCall || streamInfos[j].isSubdomainCall;
       for (const auto &w : streamInfos[i].writes) {
         if (streamInfos[j].reads.count(w) && !isPersistent(w)) {
           hasDep = true;
@@ -3927,7 +3940,7 @@ ASTNode CodeResolver::processDomainsForNode(ASTNode node, ScopeStack scopeStack,
             if (domain && domain->getNodeType() != AST::None) {
               setDomainForNode(indexElement, domain, scopeStack, m_tree);
             } else {
-              std::cerr << "WARNING: domain has not resolved for bundle when "
+              std::cerr << "WARNING: domain has not resolved for array when "
                            "resolving index: "
                         << node->toText() << std::endl;
             }
@@ -3943,7 +3956,8 @@ ASTNode CodeResolver::processDomainsForNode(ASTNode node, ScopeStack scopeStack,
 
       if (scopeStack.size() > 0) {
         std::shared_ptr<DeclarationNode> scopeDeclaration =
-            ASTQuery::findDeclarationForNode(node, {scopeStack.back()}, nullptr);
+            ASTQuery::findDeclarationForNode(node, {scopeStack.back()},
+                                             nullptr);
         if (scopeDeclaration) {
           std::shared_ptr<ListNode> parentList =
               std::make_shared<ListNode>(__FILE__, __LINE__);
@@ -4408,8 +4422,8 @@ void CodeResolver::expandNamesToArrays(std::shared_ptr<StreamNode> stream,
   if (left->getNodeType() == AST::Entity) {
     EntityNode *name = static_cast<EntityNode *>(left.get());
     ScopeStack scope;
-    std::shared_ptr<DeclarationNode> decl =
-        ASTQuery::findDeclarationByName(name->getName(), scope, tree, name->getNamespaceList());
+    std::shared_ptr<DeclarationNode> decl = ASTQuery::findDeclarationByName(
+        name->getName(), scope, tree, name->getNamespaceList());
     int size = 0;
     if (decl) {
       if (decl->getNodeType() == AST::ArrayDeclaration) {
@@ -4510,7 +4524,8 @@ CodeResolver::declareUnknownStreamSymbols(std::shared_ptr<StreamNode> stream,
           std::static_pointer_cast<EntityNode>(right);
       int size = 0;
       if (left->getNodeType() == AST::Function) {
-        auto funcDecl = ASTQuery::findDeclarationForNode(left, localScope, tree);
+        auto funcDecl =
+            ASTQuery::findDeclarationForNode(left, localScope, tree);
         if (funcDecl) {
           size = CodeAnalysis::getTypeNumOutputs(funcDecl, localScope, m_tree);
         }
@@ -4561,10 +4576,12 @@ void CodeResolver::declareInternalEntitiesForNode(ASTNode node,
   //  {{decl->getName(), internalBlocks->getChildren()}}
   auto findDeclarationWithinFunctionScope = [&](ASTNode portEntity,
                                                 ScopeStack innerScope) {
-    auto portBlockDecl = ASTQuery::findDeclarationForNode(portEntity, innerScope, nullptr);
+    auto portBlockDecl =
+        ASTQuery::findDeclarationForNode(portEntity, innerScope, nullptr);
     if (!portBlockDecl) {
       // Check for constants in parent nodes
-      auto rootPortBlockDecl = ASTQuery::findDeclarationForNode(portEntity, subScope, m_tree);
+      auto rootPortBlockDecl =
+          ASTQuery::findDeclarationForNode(portEntity, subScope, m_tree);
       if (rootPortBlockDecl &&
           ASTQuery::isConstant(rootPortBlockDecl, subScope, m_tree)) {
         portBlockDecl = rootPortBlockDecl;
@@ -4647,7 +4664,7 @@ void CodeResolver::declareInternalEntitiesForNode(ASTNode node,
 
         if (!portBlockDecl) {
           // FIXME this has to check wether block is a bundle and create
-          // declaration accordingly
+          // declaration array
           portBlockDecl = createSignalDeclaration(
               ASTQuery::getNodeName(portEntity), 1, subScope, m_tree);
           internalBlocks->addChild(portBlockDecl);
@@ -4706,7 +4723,7 @@ void CodeResolver::declareInternalEntitiesForNode(ASTNode node,
         auto portBlockDecl = findDeclarationWithinFunctionScope(
             portEntity, {{node, internalBlocks->getChildren()}});
         if (!portBlockDecl) {
-          // FIXME this has to check wether block is a bundle and create
+          // FIXME this has to check wether block is a array and create
           // declaration accordingly
           portBlockDecl = createSignalDeclaration(
               ASTQuery::getNodeName(portEntity), 1, subScope, m_tree);
@@ -4962,7 +4979,8 @@ void CodeResolver::setPortEntityAttributesForDeclaration(
       auto entityNode = std::static_pointer_cast<EntityNode>(portEntityNode);
 
       auto entityDecl = ASTQuery::findDeclarationByName(
-          entityNode->getName(), {}, decl->getPropertyValue("entities"), entityNode->getNamespaceList());
+          entityNode->getName(), {}, decl->getPropertyValue("entities"),
+          entityNode->getNamespaceList());
       if (entityDecl) {
         setPortAttributesForEntity(entityDecl, inputPortNode->getName());
       }
@@ -4976,7 +4994,8 @@ void CodeResolver::setPortEntityAttributesForDeclaration(
       auto entityNode = std::static_pointer_cast<EntityNode>(portEntityNode);
 
       auto entityDecl = ASTQuery::findDeclarationByName(
-          entityNode->getName(), {}, decl->getPropertyValue("entities"), entityNode->getNamespaceList());
+          entityNode->getName(), {}, decl->getPropertyValue("entities"),
+          entityNode->getNamespaceList());
       if (entityDecl) {
         setPortAttributesForEntity(entityDecl, outputPortNode->getName());
       }
@@ -5511,7 +5530,7 @@ void CodeResolver::checkStreamConnections(std::shared_ptr<StreamNode> stream,
           markConnectionForNode(right, scopeStack, node);
         }
       } else {
-        // Otherwise indexed bundle is sampling indeces
+        // Otherwise indexed array is sampling indeces
         auto indexList = std::static_pointer_cast<ArrayNode>(left)->index();
         for (const auto &node : indexList->getChildren()) {
           markConnectionForNode(left, scopeStack, node);
@@ -5816,7 +5835,8 @@ void CodeResolver::markConnectionForNode(ASTNode node, ScopeStack scopeStack,
             frameworkName = std::static_pointer_cast<ValueNode>(frameworkNode)
                                 ->getStringValue();
           }
-          auto decl = ASTQuery::findDeclarationForNode(indexChild, scopeStack, m_tree, frameworkName);
+          auto decl = ASTQuery::findDeclarationForNode(indexChild, scopeStack,
+                                                       m_tree, frameworkName);
           if (decl) {
             if (domain) {
               decl->appendToPropertyValue("reads", domain);
@@ -5902,7 +5922,8 @@ void CodeResolver::markConnectionForNode(ASTNode node, ScopeStack scopeStack,
           decl->getEntityType() == "sequence") {
         auto doneTrigger = decl->getPropertyValue("done");
         if (doneTrigger) {
-          auto doneTriggerDecl = ASTQuery::findDeclarationForNode(doneTrigger, scopeStack, m_tree);
+          auto doneTriggerDecl =
+              ASTQuery::findDeclarationForNode(doneTrigger, scopeStack, m_tree);
           if (doneTriggerDecl) {
             auto triggerDests =
                 doneTriggerDecl->getCompilerProperty("triggerDestinations");
@@ -5925,7 +5946,8 @@ void CodeResolver::markConnectionForNode(ASTNode node, ScopeStack scopeStack,
       // Check if previous is trigger
       std::shared_ptr<DeclarationNode> previousDecl;
       if (previous) {
-        previousDecl = ASTQuery::findDeclarationForNode(previous, scopeStack, m_tree);
+        previousDecl =
+            ASTQuery::findDeclarationForNode(previous, scopeStack, m_tree);
         if (previousDecl && previousDecl->getEntityType() == "trigger") {
           if (!previousDecl->getCompilerProperty("triggerDestinations")) {
             previousDecl->setCompilerProperty(
@@ -5942,8 +5964,9 @@ void CodeResolver::markConnectionForNode(ASTNode node, ScopeStack scopeStack,
       auto resetProp = decl->getPropertyValue("reset");
       if (resetProp && (resetProp->getNodeType() == AST::Entity ||
                         resetProp->getNodeType() == AST::Array)) {
-        // TODO should trigger bundles be allowed?
-        auto triggerDecl = ASTQuery::findDeclarationForNode(resetProp, scopeStack, m_tree);
+        // TODO should trigger array be allowed?
+        auto triggerDecl =
+            ASTQuery::findDeclarationForNode(resetProp, scopeStack, m_tree);
         if (triggerDecl) {
           if (!triggerDecl->getCompilerProperty("triggerResets")) {
             triggerDecl->setCompilerProperty(
