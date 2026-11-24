@@ -790,6 +790,51 @@ void CodeResolver::processGpio() {
     return;
   }
 
+  // Attach hardware ISR vectors to interrupt-enabled gpioPins and any
+  // interrupt domains triggered by them.
+  std::map<std::string, std::string> pinIsrVectors;
+  for (size_t i = 0; i < pinDecls.size(); ++i) {
+    if (configs[i].interrupt == "InterruptNone") {
+      continue;
+    }
+    if (auto bp = hardware->boardPin(configs[i].label);
+        bp && !bp->interruptVector.empty()) {
+      pinDecls[i]->setCompilerProperty(
+          "isrVector",
+          std::make_shared<ValueNode>(bp->interruptVector,
+                                      pinDecls[i]->getFilename().c_str(),
+                                      pinDecls[i]->getLine()));
+      pinIsrVectors[pinDecls[i]->getName()] = bp->interruptVector;
+    }
+  }
+  if (!pinIsrVectors.empty()) {
+    for (const auto &child : m_tree->getChildren()) {
+      if (!child || child->getNodeType() != AST::Declaration) {
+        continue;
+      }
+      auto domDecl = std::static_pointer_cast<DeclarationNode>(child);
+      const std::string &et = domDecl->getEntityType();
+      if (et != "_domainDefinition" && et != "gameDefinition") {
+        continue;
+      }
+      if (auto trigProp = domDecl->getPropertyValue("trigger")) {
+        std::string trigName = ASTQuery::getNodeName(trigProp);
+        auto sep = trigName.rfind("::");
+        if (sep != std::string::npos) {
+          trigName = trigName.substr(sep + 2);
+        }
+        auto it = pinIsrVectors.find(trigName);
+        if (it != pinIsrVectors.end()) {
+          domDecl->setCompilerProperty(
+              "isrVector",
+              std::make_shared<ValueNode>(it->second,
+                                          domDecl->getFilename().c_str(),
+                                          domDecl->getLine()));
+        }
+      }
+    }
+  }
+
   // Startup: RootDomain's onLoad sets every pin up, before any domain runs.
   auto writes = HardwareResolver::pinSetupWrites(*hardware, configs);
   if (!writes.empty()) {

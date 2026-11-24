@@ -107,6 +107,7 @@ struct BoardPin {
   std::optional<int64_t> analog;
   std::vector<std::string> modes;      // added by pinFeatures
   std::vector<std::string> interrupts; // added by pinFeatures
+  std::string interruptVector;         // added by pinFeatures (interruptSource.vector)
   std::vector<PinRoute> routes;
   std::string reservedBy;
 };

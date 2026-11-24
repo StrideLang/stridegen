@@ -680,6 +680,12 @@ std::vector<BoardPin> ResolvedHardware::boardPins() const {
       auto f = feature->second;
       pin.modes = nameList(f->getPropertyValue("modes"));
       pin.interrupts = nameList(f->getPropertyValue("interrupts"));
+      if (auto isrc = asDeclaration(f->getPropertyValue("interruptSource"))) {
+        auto vecProp = isrc->getPropertyValue("vector");
+        if (vecProp && vecProp->getNodeType() == AST::String) {
+          pin.interruptVector = HardwareResolver::valueText(vecProp);
+        }
+      }
       if (auto analog = intValue(f->getPropertyValue("analog"))) {
         pin.analog = analog;
       }
