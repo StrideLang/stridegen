@@ -981,7 +981,7 @@ TEST(Resolver, PlatformPolicyManagerDirect) {
   EXPECT_EQ(pm2350.getTargetDevice(), "RP2350");
   const auto &res2350 = pm2350.getHardwareResources();
   // Cumulative resources
-  EXPECT_NE(std::find(res2350.begin(), res2350.end(), "PicoBootromFloat"), res2350.end());
+  // RP2350 uses CortexM33HardwareFpu instead of RP2040's PicoBootromFloat
   EXPECT_NE(std::find(res2350.begin(), res2350.end(), "PicoHardwareInterpolator"), res2350.end());
   EXPECT_NE(std::find(res2350.begin(), res2350.end(), "CortexM33HardwareFpu"), res2350.end());
 

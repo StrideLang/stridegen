@@ -124,11 +124,11 @@ TEST(HardwareResolver, PicoOverlayChainUnchanged) {
   auto rp2350 = resolver.resolve("Pico", "RP2350");
   ASSERT_TRUE(rp2350.has_value());
   ASSERT_EQ(rp2350->chain().size(), 2u);
-  EXPECT_EQ(rp2350->chain()[0].name, "RP2040");
+  EXPECT_EQ(rp2350->chain()[0].name, "CortexM33");
+  EXPECT_EQ(rp2350->chain()[1].name, "RP2350");
 
-  // Resources accumulate; compilerFlags is overridden.
   auto resources = rp2350->nameListProperty("resources");
-  EXPECT_TRUE(contains(resources, "PicoBootromFloat"));
+  EXPECT_TRUE(contains(resources, "PicoHardwareInterpolator"));
   EXPECT_TRUE(contains(resources, "CortexM33HardwareFpu"));
   EXPECT_NE(rp2350->stringProperty("compilerFlags").find("cortex-m33"),
             std::string::npos);

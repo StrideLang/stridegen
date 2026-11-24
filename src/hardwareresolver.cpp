@@ -1064,6 +1064,14 @@ HardwareResolver::pinSetupWrites(const ResolvedHardware &hardware,
         }
         break;
       }
+    } else {
+      for (const auto &field : port->fields) {
+        if (field.option == "_PinFunctions") {
+          if (auto code = field.codeFor("PinGpio")) {
+            writeField(Function, field, bit, width, *code, pin.name + " GPIO");
+          }
+        }
+      }
     }
 
     // Mode and direction, last. Emulated open drain drives the direction
