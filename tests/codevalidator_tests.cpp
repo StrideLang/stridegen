@@ -278,8 +278,14 @@ TEST(CodeValidator, BenchmarkValidation) {
       std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
   std::cout << "[BENCHMARK] CodeValidator runtime: " << elapsedMs << " ms"
             << std::endl;
-  // Should validate basic tree in well under 1000ms
-  EXPECT_LT(elapsedMs, 1000);
+  // Should validate basic tree in well under 1000ms. Debug builds (no
+  // optimization, checked iterators) are much slower, so allow more.
+#ifdef NDEBUG
+  constexpr long long limitMs = 1000;
+#else
+  constexpr long long limitMs = 3000;
+#endif
+  EXPECT_LT(elapsedMs, limitMs);
 }
 
 TEST(CodeValidator, IgnoredRateInOneShotDomainWarning) {
