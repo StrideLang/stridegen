@@ -772,7 +772,9 @@ void StreamExpander::expandIndexedStreams() {
 }
 
 void StreamExpander::expandParallel() {
-  for (const ASTNode &node : m_ctx.tree->getChildren()) {
+  // Copy: the loop adds declarations to the tree.
+  const std::vector<ASTNode> children = m_ctx.tree->getChildren();
+  for (const ASTNode &node : children) {
     if (node && node->getNodeType() == AST::Stream) {
       auto stream = std::static_pointer_cast<StreamNode>(node);
       expandParallelStream(stream, ScopeStack(), m_ctx.tree);

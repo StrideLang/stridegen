@@ -438,3 +438,235 @@ TEST(CodeValidator, EnumConstantGroups) {
     }
   }
 }
+
+TEST(CodeValidator, IsrDomainRejectsMissingResources) {
+  auto strideroot = ASTFunctions::getDefaultStrideRoot();
+  std::string code = R"(
+use AVR version 1.0 on ArduinoUno
+
+signal TickCount { type: Int domain: AvrTimer1IsrDomain default: 0 }
+TickCount + 1 >> TickCount;
+0.01 >> Sleep(domain: AvrTimer1IsrDomain);
+"isr" >> PrintLn();
+)";
+  std::string tempFile = "temp_validator_isr_missing_res.stride";
+  {
+    std::ofstream out(tempFile);
+    out << code;
+  }
+  ASTNode tree = AST::parseFile(tempFile.c_str());
+  ASSERT_NE(tree, nullptr);
+  ASTFunctions::preprocess(tree);
+
+  CodeResolver resolver(tree, strideroot);
+  resolver.process();
+
+  CodeValidator validator(tree);
+  EXPECT_FALSE(validator.isValid());
+
+  bool foundTimer0Error = false;
+  bool foundUsart0Error = false;
+  for (const auto &err : validator.getErrors()) {
+    if (err.type == LangError::MissingDomainResource &&
+        err.errorTokens.size() >= 3) {
+      if (err.errorTokens[0] == "Sleep" &&
+          err.errorTokens[1] == "_AvrTimer0" &&
+          err.errorTokens[2] == "AvrTimer1IsrDomain") {
+        foundTimer0Error = true;
+      }
+      if (err.errorTokens[0] == "PrintLn" &&
+          err.errorTokens[1] == "_AvrUsart0") {
+        foundUsart0Error = true;
+      }
+    }
+  }
+  EXPECT_TRUE(foundTimer0Error);
+  std::remove(tempFile.c_str());
+}
+
+TEST(CodeValidator, IsrDomainSelectsPoly5WithFastPolicyAndRejectsSinWithoutPolicy) {
+  auto strideroot = ASTFunctions::getDefaultStrideRoot();
+  // 1. AvrTimer1IsrDomain has qualityPolicy: QualityPolicy::Fast -> Sin()
+  // resolves to Sin@Poly5 (pure polynomial, no _AvrMathLib required) -> valid!
+  {
+    std::string validCode = R"(
+use AVR version 1.0 on ArduinoUno
+
+signal Angle { type: Real domain: AvrTimer1IsrDomain default: 0.5 }
+signal FastOut { type: Real domain: AvrTimer1IsrDomain default: 0.0 }
+Angle >> Sin() >> FastOut;
+)";
+    std::string tempFile = "temp_validator_isr_fast_sin.stride";
+    {
+      std::ofstream out(tempFile);
+      out << validCode;
+    }
+    ASTNode tree = AST::parseFile(tempFile.c_str());
+    ASSERT_NE(tree, nullptr);
+
+    CodeResolver resolver(tree, strideroot);
+    resolver.process();
+
+    CodeValidator validator(tree);
+    EXPECT_TRUE(validator.isValid());
+    for (const auto &err : validator.getErrors()) {
+      ADD_FAILURE() << err.getErrorText();
+    }
+    std::remove(tempFile.c_str());
+  }
+
+  // 2. CustomIsrDomain without qualityPolicy: Sin() resolves to Sin -> __Sin
+  // (requires _AvrMathLib) -> must NOT silently fall back, emits MissingDomainResource!
+  {
+    std::string invalidCode = R"(
+use AVR version 1.0 on ArduinoUno
+
+_domainDefinition CustomIsrDomain {
+    framework: _AvrFramework
+    parentDomain: RootDomain
+    requiresResources: [_RootContext, _AvrProcessor, _AvrFlashMemory, _AvrSram, _AvrGpio]
+    rate: 4000
+    execution: ExecutionInterrupt
+}
+
+signal Angle { type: Real domain: CustomIsrDomain default: 0.5 }
+signal Out { type: Real domain: CustomIsrDomain default: 0.0 }
+Angle >> Sin() >> Out;
+)";
+    std::string tempFile = "temp_validator_isr_no_policy_sin.stride";
+    {
+      std::ofstream out(tempFile);
+      out << invalidCode;
+    }
+    ASTNode tree = AST::parseFile(tempFile.c_str());
+    ASSERT_NE(tree, nullptr);
+
+    CodeResolver resolver(tree, strideroot);
+    resolver.process();
+
+    CodeValidator validator(tree);
+    EXPECT_FALSE(validator.isValid());
+    bool foundMathLibError = false;
+    for (const auto &err : validator.getErrors()) {
+      if (err.type == LangError::MissingDomainResource &&
+          err.errorTokens.size() >= 3 &&
+          err.errorTokens[0] == "Sin" &&
+          err.errorTokens[1] == "_AvrMathLib" &&
+          err.errorTokens[2] == "CustomIsrDomain") {
+        foundMathLibError = true;
+      }
+    }
+    EXPECT_TRUE(foundMathLibError);
+    std::remove(tempFile.c_str());
+  }
+}
+
+TEST(CodeValidator, ExclusiveResourceAndMaxInstancesEnforcement) {
+  auto strideroot = ASTFunctions::getDefaultStrideRoot();
+  std::string code = R"(
+resource _ExclusiveHwTimer {
+    exclusive: on
+}
+
+resource _LimitedDmaChannel {
+    exclusive: off
+    maxInstances: 1
+}
+
+_domainDefinition DomA {
+    framework: _JitFramework
+    requiresResources: [_ExclusiveHwTimer, _LimitedDmaChannel]
+    rate: 1000
+}
+
+_domainDefinition DomB {
+    framework: _JitFramework
+    requiresResources: [_ExclusiveHwTimer, _LimitedDmaChannel]
+    rate: 2000
+}
+
+signal A { domain: DomA default: 0.0 }
+signal B { domain: DomB default: 0.0 }
+A + 1.0 >> A;
+B + 1.0 >> B;
+)";
+  std::string tempFile = "temp_validator_exclusive_res.stride";
+  {
+    std::ofstream out(tempFile);
+    out << code;
+  }
+  ASTNode tree = AST::parseFile(tempFile.c_str());
+  ASSERT_NE(tree, nullptr);
+  tree->addChild(
+      std::make_shared<SystemNode>("JIT", 1, 0, __FILE__, __LINE__));
+  ASTFunctions::preprocess(tree);
+
+  CodeResolver resolver(tree, strideroot);
+  resolver.process();
+
+  CodeValidator validator(tree);
+  EXPECT_FALSE(validator.isValid());
+
+  bool foundExclusiveConflict = false;
+  bool foundLimitExceeded = false;
+  for (const auto &err : validator.getErrors()) {
+    if (err.type == LangError::ExclusiveResourceConflict &&
+        !err.errorTokens.empty() &&
+        err.errorTokens[0] == "_ExclusiveHwTimer") {
+      foundExclusiveConflict = true;
+    }
+    if (err.type == LangError::ResourceInstanceLimitExceeded &&
+        !err.errorTokens.empty() &&
+        err.errorTokens[0] == "_LimitedDmaChannel") {
+      foundLimitExceeded = true;
+    }
+  }
+  EXPECT_TRUE(foundExclusiveConflict);
+  EXPECT_TRUE(foundLimitExceeded);
+  std::remove(tempFile.c_str());
+}
+
+TEST(CodeValidator, PioInstructionOverflowEnforcement) {
+  auto strideroot = ASTFunctions::getDefaultStrideRoot();
+  std::ostringstream ss;
+  ss << "_domainDefinition PioOverflowDom {\n"
+     << "    framework: _JitFramework\n"
+     << "    execution: ExecutionHardware\n"
+     << "    requiresResources: [_Pio0_Sm0]\n"
+     << "    rate: 1000000\n"
+     << "}\n"
+     << "signal Word { type: UInt32 domain: PioOverflowDom default: 0 }\n";
+  for (int i = 0; i < 33; ++i) {
+    ss << "Word >> PioShiftOut(bits: 1);\n";
+  }
+
+  std::string tempFile = "temp_validator_pio_overflow.stride";
+  {
+    std::ofstream out(tempFile);
+    out << ss.str();
+  }
+  ASTNode tree = AST::parseFile(tempFile.c_str());
+  ASSERT_NE(tree, nullptr);
+  tree->addChild(
+      std::make_shared<SystemNode>("JIT", 1, 0, __FILE__, __LINE__));
+  ASTFunctions::preprocess(tree);
+
+  CodeResolver resolver(tree, strideroot);
+  resolver.process();
+
+  CodeValidator validator(tree);
+  EXPECT_FALSE(validator.isValid());
+
+  bool foundOverflow = false;
+  for (const auto &err : validator.getErrors()) {
+    if (err.type == LangError::PioInstructionOverflow &&
+        err.errorTokens.size() >= 3 &&
+        err.errorTokens[0] == "PioOverflowDom" &&
+        err.errorTokens[1] == "33" &&
+        err.errorTokens[2] == "_Pio0") {
+      foundOverflow = true;
+    }
+  }
+  EXPECT_TRUE(foundOverflow);
+  std::remove(tempFile.c_str());
+}

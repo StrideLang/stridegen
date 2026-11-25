@@ -232,7 +232,7 @@ bool isOutput(const GpioPinConfig &pin) { return pin.mode == "PinOutput"; }
 
 class RegisterWritePlan {
 public:
-  enum Step { Enable, Level, Pad, Function, Mode, StepCount };
+  enum Step { Enable, Level, Pad, Function, Mode, Interrupt, StepCount };
 
   RegisterWritePlan() : m_steps(StepCount) {}
 
@@ -546,6 +546,31 @@ void emitPinMode(RegisterWritePlan &plan, const GpioPinConfig &pin,
   }
 }
 
+// Hardware interrupt sense and mask registers, after pin mode/pull setup.
+void emitInterruptSetup(RegisterWritePlan &plan, const GpioPinConfig &pin,
+                        const BoardPin &boardPin, const GpioPort &port,
+                        uint64_t pinMask) {
+  if (pin.interrupt == "InterruptNone" || !boardPin.interruptSource) {
+    return;
+  }
+  const auto &isrc = *boardPin.interruptSource;
+  if (isrc.senseField) {
+    if (auto code = isrc.senseField->codeFor(pin.interrupt)) {
+      plan.writeField(RegisterWritePlan::Interrupt, *isrc.senseField, 0,
+                      port.width, *code, pin.name + " " + pin.interrupt);
+    }
+  }
+  if (isrc.pinMaskRegister) {
+    plan.modify(RegisterWritePlan::Interrupt, *isrc.pinMaskRegister, port.width,
+                pinMask, pinMask, pin.name + " interrupt pin mask");
+  }
+  if (isrc.enableBit >= 0 && isrc.enableBit < 64) {
+    const uint64_t enMask = uint64_t(1) << isrc.enableBit;
+    plan.modify(RegisterWritePlan::Interrupt, isrc.enableRegister, port.width,
+                enMask, enMask, pin.name + " interrupt enable");
+  }
+}
+
 } // namespace
 
 // ResolvedHardware -----------------------------------------------------------
@@ -800,6 +825,37 @@ void ResolvedHardware::ensureGpioCache() const {
       auto reserved = f->getPropertyValue("reservedBy");
       if (reserved && reserved->getNodeType() == AST::String) {
         pin.reservedBy = ASTQuery::valueText(reserved);
+      }
+      if (auto isrcNode = f->getPropertyValue("interruptSource")) {
+        if (auto isrcDecl = asDeclaration(isrcNode)) {
+          GpioInterruptSource isrc;
+          isrc.vector = ASTQuery::valueText(isrcDecl->getPropertyValue("vector"));
+          isrc.enableRegister = intOf(isrcDecl->getPropertyValue("enableRegister")).value_or(0);
+          isrc.enableBit = static_cast<int>(intOf(isrcDecl->getPropertyValue("enableBit")).value_or(0));
+          isrc.pinMaskRegister = intOf(isrcDecl->getPropertyValue("pinMaskRegister"));
+          if (auto sfNode = isrcDecl->getPropertyValue("senseField")) {
+            if (auto sfDecl = asDeclaration(sfNode)) {
+              GpioField field;
+              field.name = sfDecl->getName();
+              field.file = sfDecl->getFilename();
+              field.line = sfDecl->getLine();
+              field.option = optionName(sfDecl->getPropertyValue("option"));
+              field.reg = intOf(sfDecl->getPropertyValue("register")).value_or(0);
+              field.regHigh = intOf(sfDecl->getPropertyValue("registerHigh"));
+              field.bitsPerPin = static_cast<int>(intOf(sfDecl->getPropertyValue("bitsPerPin")).value_or(1));
+              field.shift = static_cast<int>(intOf(sfDecl->getPropertyValue("shift")).value_or(0));
+              field.pinStride = intOf(sfDecl->getPropertyValue("pinStride")).value_or(0);
+              field.options = optionNameList(sfDecl->getPropertyValue("options"));
+              for (const auto &code : listItems(sfDecl->getPropertyValue("codes"))) {
+                field.codes.push_back(intOf(code).value_or(0));
+              }
+              isrc.senseField = field;
+            }
+          }
+          if (!isrc.vector.empty() && isrc.enableRegister != 0) {
+            pin.interruptSource = isrc;
+          }
+        }
       }
     }
     pin.routes.insert(pin.routes.end(), anyRoutes.begin(), anyRoutes.end());
@@ -1176,6 +1232,7 @@ HardwareResolver::pinSetupWrites(const ResolvedHardware &hardware,
     emitPadFields(plan, pin, *port, bit);
     emitFunctionSelect(plan, pin, *boardPin, *port, bit);
     emitPinMode(plan, pin, *port, *access, bit, pinMask);
+    emitInterruptSetup(plan, pin, *boardPin, *port, pinMask);
   }
 
   return plan.flatten();

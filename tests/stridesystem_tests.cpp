@@ -89,7 +89,7 @@ TEST(StrideSystem, FrameworkDataTypeNames) {
               "int32_t");
 
     StrideSystem stm32(strideRoot, "SaturnM7", 1, 0, {});
-    EXPECT_EQ(frameworkName(stm32.getFrameworkDataType("STM32F7", "Real")),
+    EXPECT_EQ(frameworkName(stm32.getFrameworkDataType("STM32", "Real")),
               "float");
 
     StrideSystem jit(strideRoot, "JIT", 1, 0, {});

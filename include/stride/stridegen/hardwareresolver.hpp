@@ -95,6 +95,15 @@ struct PinRoute {
   std::optional<int64_t> reg;
 };
 
+// How a pin's interrupt is enabled in hardware and which ISR vector it triggers.
+struct GpioInterruptSource {
+  std::string vector;
+  int64_t enableRegister = 0;
+  int enableBit = 0;
+  std::optional<int64_t> pinMaskRegister;
+  std::optional<GpioField> senseField;
+};
+
 struct BoardPin {
   std::string label;
   std::string port; // empty for an FPGA package pin
@@ -104,6 +113,7 @@ struct BoardPin {
   std::vector<std::string> modes;      // added by pinFeatures
   std::vector<std::string> interrupts; // added by pinFeatures
   std::string interruptVector;         // added by pinFeatures (interruptSource.vector)
+  std::optional<GpioInterruptSource> interruptSource;
   std::vector<PinRoute> routes;
   std::string reservedBy;
 };

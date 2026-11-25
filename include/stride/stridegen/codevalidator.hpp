@@ -73,6 +73,12 @@ public:
   static std::vector<LangError>
   findInvalidCrossDomainAccess(const ASTNode &tree);
 
+  // Resource dependency and conflict validation: checks that operations in each
+  // active domain have their required resources (and transitive dependsOn)
+  // satisfied by the domain, and enforces exclusive resources, maxInstances,
+  // and peripheral reservation conflicts.
+  static std::vector<LangError> findResourceErrors(ASTNode tree);
+
 private:
   void validate();
 

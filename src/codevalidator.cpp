@@ -597,6 +597,831 @@ CodeValidator::findInvalidCrossDomainAccess(const ASTNode &tree) {
   return errors;
 }
 
+std::vector<LangError> CodeValidator::findResourceErrors(ASTNode tree) {
+  std::vector<LangError> errors;
+  if (!tree) {
+    return errors;
+  }
+
+  auto stripQualifier = [](std::string name) {
+    size_t pos = name.rfind("::");
+    if (pos != std::string::npos) {
+      return name.substr(pos + 2);
+    }
+    return name;
+  };
+
+  auto getResourceList = [&](const std::shared_ptr<DeclarationNode> &decl,
+                             const std::string &propName) {
+    std::vector<std::string> list;
+    if (!decl) {
+      return list;
+    }
+    auto prop = decl->getPropertyValue(propName);
+    if (!prop || prop->getNodeType() == AST::None) {
+      return list;
+    }
+    auto addItem = [&](const ASTNode &item) {
+      if (!item || item->getNodeType() == AST::None) {
+        return;
+      }
+      std::string name;
+      if (item->getNodeType() == AST::String) {
+        name = std::static_pointer_cast<ValueNode>(item)->getStringValue();
+      } else {
+        name = ASTQuery::getNodeName(item);
+      }
+      name = stripQualifier(name);
+      if (!name.empty() && name != "none" &&
+          std::find(list.begin(), list.end(), name) == list.end()) {
+        list.push_back(name);
+      }
+    };
+    if (prop->getNodeType() == AST::List) {
+      for (const auto &child : prop->getChildren()) {
+        addItem(child);
+      }
+    } else {
+      addItem(prop);
+    }
+    return list;
+  };
+
+  std::map<std::string, std::shared_ptr<DeclarationNode>> allDomains;
+  std::vector<std::string> domainOrder;
+  std::map<std::string, std::shared_ptr<DeclarationNode>> allResources;
+  std::vector<std::shared_ptr<DeclarationNode>> allDevices;
+  std::vector<std::shared_ptr<DeclarationNode>> allGpioPins;
+  std::map<std::string, std::string> pinFunctionPeripherals;
+
+  for (const auto &node : tree->getChildren()) {
+    if (node->getNodeType() != AST::Declaration &&
+        node->getNodeType() != AST::ArrayDeclaration) {
+      continue;
+    }
+    auto decl = std::static_pointer_cast<DeclarationNode>(node);
+    const std::string &et = decl->getEntityType();
+    if (et == "_domainDefinition" || et == "gameDefinition") {
+      if (!allDomains.count(decl->getName())) {
+        domainOrder.push_back(decl->getName());
+      }
+      allDomains[decl->getName()] = decl;
+    } else if (et == "resource" || et == "domainResource") {
+      allResources[decl->getName()] = decl;
+    } else if (et == "device") {
+      allDevices.push_back(decl);
+    } else if (et == "gpioPin") {
+      allGpioPins.push_back(decl);
+    } else {
+      auto periphProp = decl->getPropertyValue("peripheral");
+      if (periphProp && periphProp->getNodeType() == AST::String) {
+        pinFunctionPeripherals[decl->getName()] =
+            std::static_pointer_cast<ValueNode>(periphProp)->getStringValue();
+      }
+    }
+  }
+
+  if (allDomains.empty()) {
+    return errors;
+  }
+
+  // Helper to resolve the executing domain of a top-level stream
+  auto resolveStreamDomain =
+      [&](const std::shared_ptr<StreamNode> &stream) -> std::string {
+    std::string d = stripQualifier(getStreamTargetDomain(stream, {}, tree));
+    if (!d.empty() && allDomains.count(d)) {
+      return d;
+    }
+    std::string found;
+    std::function<void(const ASTNode &)> scan = [&](const ASTNode &n) {
+      if (!n || !found.empty()) {
+        return;
+      }
+      if (n->getNodeType() == AST::Stream) {
+        auto s = std::static_pointer_cast<StreamNode>(n);
+        scan(s->getRight());
+        scan(s->getLeft());
+        return;
+      }
+      if (n->getNodeType() == AST::Function) {
+        auto fn = std::static_pointer_cast<FunctionNode>(n);
+        if (fn->getName() == "Sleep") {
+          if (auto domProp = fn->getPropertyValue("domain")) {
+            std::string cand = stripQualifier(ASTQuery::getNodeName(domProp));
+            if (allDomains.count(cand)) {
+              found = cand;
+              return;
+            }
+          }
+        }
+      }
+      std::string cand =
+          stripQualifier(CodeAnalysis::getNodeDomainName(n, {}, tree));
+      if (!cand.empty() && allDomains.count(cand)) {
+        found = cand;
+      }
+    };
+    scan(stream);
+    if (!found.empty()) {
+      return found;
+    }
+    if (allDomains.count("RootDomain")) {
+      return "RootDomain";
+    }
+    if (allDomains.size() == 1) {
+      return allDomains.begin()->first;
+    }
+    return {};
+  };
+
+  // Determine active domains
+  std::set<std::string> activeDomainSet;
+  for (const auto &domName : domainOrder) {
+    auto domDecl = allDomains[domName];
+    if (!domDecl->getCompilerProperty("framework")) {
+      activeDomainSet.insert(domName);
+    }
+    for (const char *propName :
+         {"onLoad", "onInit", "onReset", "stateMachines", "preSubdomains",
+          "postSubdomains"}) {
+      auto p = domDecl->getPropertyValue(propName);
+      if (p && p->getNodeType() == AST::List && !p->getChildren().empty()) {
+        activeDomainSet.insert(domName);
+      }
+    }
+  }
+  for (const auto &node : tree->getChildren()) {
+    if (node->getNodeType() == AST::Stream) {
+      std::string d =
+          resolveStreamDomain(std::static_pointer_cast<StreamNode>(node));
+      if (!d.empty()) {
+        activeDomainSet.insert(d);
+      }
+    } else if (node->getNodeType() == AST::Declaration ||
+               node->getNodeType() == AST::ArrayDeclaration) {
+      auto decl = std::static_pointer_cast<DeclarationNode>(node);
+      if (decl->getEntityType() != "_domainDefinition" &&
+          decl->getEntityType() != "gameDefinition" &&
+          !decl->getCompilerProperty("framework")) {
+        std::string d =
+            stripQualifier(CodeAnalysis::getNodeDomainName(decl, {}, tree));
+        if (!d.empty() && allDomains.count(d)) {
+          activeDomainSet.insert(d);
+        }
+      }
+    }
+  }
+  if (activeDomainSet.empty() && allDomains.count("RootDomain")) {
+    activeDomainSet.insert("RootDomain");
+  }
+  // Propagate activity to parentDomain, preSubdomains, and postSubdomains
+  {
+    std::vector<std::string> work(activeDomainSet.begin(),
+                                  activeDomainSet.end());
+    while (!work.empty()) {
+      std::string curr = work.back();
+      work.pop_back();
+      auto it = allDomains.find(curr);
+      if (it == allDomains.end() || !it->second) {
+        continue;
+      }
+      auto domDecl = it->second;
+      if (auto parentProp = domDecl->getPropertyValue("parentDomain")) {
+        if (parentProp->getNodeType() != AST::None) {
+          std::string pName = stripQualifier(ASTQuery::getNodeName(parentProp));
+          if (allDomains.count(pName) && activeDomainSet.insert(pName).second) {
+            work.push_back(pName);
+          }
+        }
+      }
+      for (const char *subProp : {"preSubdomains", "postSubdomains"}) {
+        for (const auto &subName : getResourceList(domDecl, subProp)) {
+          if (allDomains.count(subName) &&
+              activeDomainSet.insert(subName).second) {
+            work.push_back(subName);
+          }
+        }
+      }
+    }
+  }
+
+  std::vector<std::string> activeDomains;
+  for (const auto &domName : domainOrder) {
+    if (activeDomainSet.count(domName)) {
+      activeDomains.push_back(domName);
+    }
+  }
+
+  std::set<std::vector<std::string>> seenErrors;
+  auto emitError = [&](LangError::ErrorType type, const ASTNode &at,
+                       std::vector<std::string> tokens) {
+    std::vector<std::string> key = {
+        std::to_string(static_cast<int>(type)),
+        at ? at->getFilename() : "",
+        std::to_string(at ? at->getLine() : 0)};
+    key.insert(key.end(), tokens.begin(), tokens.end());
+    if (!seenErrors.insert(key).second) {
+      return;
+    }
+    LangError err;
+    err.type = type;
+    if (at) {
+      at->copyLocationTo(err);
+    }
+    err.errorTokens = std::move(tokens);
+    errors.push_back(std::move(err));
+  };
+
+  auto isIsolatedDomain = [&](const std::shared_ptr<DeclarationNode> &domDecl) {
+    if (!domDecl) {
+      return false;
+    }
+    auto execProp = domDecl->getPropertyValue("execution");
+    if (!execProp || execProp->getNodeType() == AST::None) {
+      return false;
+    }
+    if (auto origin = execProp->getCompilerProperty("resolvedFrom")) {
+      if (origin->getNodeType() == AST::Declaration) {
+        std::string name =
+            std::static_pointer_cast<DeclarationNode>(origin)->getName();
+        if (name == "ExecutionInterrupt" || name == "ExecutionHardware" ||
+            name == "ExecutionThread") {
+          return true;
+        }
+      }
+    }
+    if (execProp->getNodeType() == AST::Int) {
+      int64_t val = std::static_pointer_cast<ValueNode>(execProp)->getIntValue();
+      return val == 1 || val == 2 || val == 4;
+    }
+    std::string mode = stripQualifier(ASTQuery::getNodeName(execProp));
+    return mode == "ExecutionInterrupt" || mode == "ExecutionHardware" ||
+           mode == "ExecutionThread";
+  };
+
+  // Compute EffectiveResources(D) and track resource claims
+  std::map<std::string, std::set<std::string>> effectiveResources;
+  std::map<std::string, std::vector<std::pair<std::string, ASTNode>>>
+      resourceClaims;
+
+  for (const auto &domName : activeDomains) {
+    auto domDecl = allDomains[domName];
+    std::set<std::string> providedDomRes;
+    {
+      std::set<std::string> visitedAnc;
+      auto curr = domDecl;
+      while (curr && visitedAnc.insert(curr->getName()).second) {
+        for (const auto &pr : getResourceList(curr, "providesResources")) {
+          providedDomRes.insert(pr);
+        }
+        auto pProp = curr->getPropertyValue("parentDomain");
+        if (!pProp || pProp->getNodeType() == AST::None) {
+          break;
+        }
+        std::string pName = stripQualifier(ASTQuery::getNodeName(pProp));
+        curr = allDomains.count(pName) ? allDomains[pName] : nullptr;
+      }
+    }
+
+    auto directReq = getResourceList(domDecl, "requiresResources");
+    auto directProv = getResourceList(domDecl, "providesResources");
+
+    for (const auto &r : directReq) {
+      resourceClaims[r].push_back({domName, domDecl});
+    }
+
+    std::set<std::string> &eff = effectiveResources[domName];
+    std::vector<std::string> queue;
+    auto addEff = [&](const std::string &r) {
+      if (!r.empty() && eff.insert(r).second) {
+        queue.push_back(r);
+      }
+    };
+
+    for (const auto &r : directReq) {
+      addEff(r);
+    }
+    for (const auto &r : directProv) {
+      addEff(r);
+    }
+    for (const auto &r : providedDomRes) {
+      addEff(r);
+    }
+
+    // Cooperative/inline subdomains without explicit requiresResources inherit
+    // from their cooperative/inline parentDomain chain.
+    if (directReq.empty() && !isIsolatedDomain(domDecl)) {
+      std::set<std::string> visitedAnc;
+      auto curr = domDecl;
+      while (curr && visitedAnc.insert(curr->getName()).second) {
+        auto pProp = curr->getPropertyValue("parentDomain");
+        if (!pProp || pProp->getNodeType() == AST::None) {
+          break;
+        }
+        std::string pName = stripQualifier(ASTQuery::getNodeName(pProp));
+        auto parentDecl = allDomains.count(pName) ? allDomains[pName] : nullptr;
+        if (!parentDecl || isIsolatedDomain(parentDecl)) {
+          break;
+        }
+        auto pReq = getResourceList(parentDecl, "requiresResources");
+        if (!pReq.empty()) {
+          for (const auto &r : pReq) {
+            addEff(r);
+          }
+          break;
+        }
+        curr = parentDecl;
+      }
+    }
+
+    while (!queue.empty()) {
+      std::string r = queue.back();
+      queue.pop_back();
+      auto resIt = allResources.find(r);
+      if (resIt == allResources.end() || !resIt->second) {
+        continue;
+      }
+      auto resDecl = resIt->second;
+      for (const auto &dep : getResourceList(resDecl, "dependsOn")) {
+        auto depIt = allResources.find(dep);
+        if (depIt != allResources.end() && depIt->second &&
+            depIt->second->getEntityType() == "domainResource") {
+          if (!providedDomRes.count(dep) &&
+              std::find(directReq.begin(), directReq.end(), dep) ==
+                  directReq.end()) {
+            emitError(LangError::MissingDomainResource, domDecl,
+                      {r, dep, domName});
+          }
+        }
+        addEff(dep);
+      }
+    }
+  }
+
+  // Enforce exclusivity, maxInstances, and peripheral conflicts
+  std::set<std::string> runtimeReserves;
+  for (const auto &dev : allDevices) {
+    for (const auto &resv : getResourceList(dev, "runtimeReserves")) {
+      runtimeReserves.insert(resv);
+    }
+  }
+
+  for (const auto &[resName, claims] : resourceClaims) {
+    auto resIt = allResources.find(resName);
+    if (resIt == allResources.end() || !resIt->second) {
+      continue;
+    }
+    auto resDecl = resIt->second;
+
+    bool isExclusive = false;
+    if (auto exProp = resDecl->getPropertyValue("exclusive")) {
+      if (exProp->getNodeType() == AST::Switch) {
+        isExclusive =
+            std::static_pointer_cast<ValueNode>(exProp)->getSwitchValue();
+      }
+    }
+
+    if (isExclusive && claims.size() > 1) {
+      for (size_t i = 1; i < claims.size(); ++i) {
+        emitError(LangError::ExclusiveResourceConflict, claims[i].second,
+                  {resName, claims[0].first, claims[i].first});
+      }
+    }
+
+    if (auto maxProp = resDecl->getPropertyValue("maxInstances")) {
+      if (maxProp->getNodeType() == AST::Int) {
+        int64_t maxInst =
+            std::static_pointer_cast<ValueNode>(maxProp)->getIntValue();
+        if (maxInst > 0 && static_cast<int64_t>(claims.size()) > maxInst) {
+          emitError(LangError::ResourceInstanceLimitExceeded,
+                    claims[static_cast<size_t>(maxInst)].second,
+                    {resName, std::to_string(maxInst),
+                     std::to_string(claims.size())});
+        }
+      }
+    }
+
+    if (auto periphProp = resDecl->getPropertyValue("peripheral")) {
+      if (periphProp->getNodeType() == AST::String) {
+        std::string periph =
+            std::static_pointer_cast<ValueNode>(periphProp)->getStringValue();
+        if (!periph.empty() && periph != "none") {
+          for (const auto &claim : claims) {
+            auto domDecl =
+                allDomains.count(claim.first) ? allDomains[claim.first] : nullptr;
+            bool userOrInterrupt =
+                !domDecl || !domDecl->getCompilerProperty("framework") ||
+                isIsolatedDomain(domDecl);
+            if (isExclusive && userOrInterrupt &&
+                runtimeReserves.count(periph)) {
+              emitError(LangError::InvalidHardware, claim.second,
+                        {"resource '" + resName + "' uses peripheral '" +
+                         periph + "', which is reserved by the runtime"});
+            }
+            if (isExclusive) {
+              for (const auto &pinDecl : allGpioPins) {
+                auto modeProp = pinDecl->getPropertyValue("mode");
+                std::string modeName =
+                    modeProp ? stripQualifier(ASTQuery::getNodeName(modeProp))
+                             : "";
+                if (modeName != "PinFunction") {
+                  continue;
+                }
+                auto fnProp = pinDecl->getPropertyValue("function");
+                std::string fnName =
+                    fnProp ? stripQualifier(ASTQuery::getNodeName(fnProp)) : "";
+                if (fnName.empty()) {
+                  continue;
+                }
+                std::string pinPeriph;
+                auto pIt = pinFunctionPeripherals.find(fnName);
+                if (pIt != pinFunctionPeripherals.end()) {
+                  pinPeriph = pIt->second;
+                } else if (fnProp) {
+                  auto fnDecl = ASTQuery::findDeclarationForNode(fnProp, {}, tree);
+                  if (fnDecl) {
+                    auto pp = fnDecl->getPropertyValue("peripheral");
+                    if (pp && pp->getNodeType() == AST::String) {
+                      pinPeriph =
+                          std::static_pointer_cast<ValueNode>(pp)->getStringValue();
+                    }
+                  }
+                }
+                if (pinPeriph == periph) {
+                  emitError(LangError::ExclusiveResourceConflict, pinDecl,
+                            {periph, claim.first, pinDecl->getName()});
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // Operation resource checking per active domain
+  auto checkDeclResources =
+      [&](const std::shared_ptr<DeclarationNode> &opDecl,
+          const std::string &displayOp, const ASTNode &reportNode,
+          const std::string &domName) {
+        if (!opDecl || !allDomains.count(domName)) {
+          return;
+        }
+        const auto &eff = effectiveResources[domName];
+        std::vector<std::string> reqQueue = getResourceList(opDecl, "resources");
+        std::set<std::string> visitedReq(reqQueue.begin(), reqQueue.end());
+        for (size_t idx = 0; idx < reqQueue.size(); ++idx) {
+          std::string req = reqQueue[idx];
+          if (!eff.count(req)) {
+            emitError(LangError::MissingDomainResource,
+                      reportNode ? reportNode : opDecl,
+                      {displayOp, req, domName});
+          }
+          auto rIt = allResources.find(req);
+          if (rIt != allResources.end() && rIt->second) {
+            for (const auto &dep : getResourceList(rIt->second, "dependsOn")) {
+              if (visitedReq.insert(dep).second) {
+                reqQueue.push_back(dep);
+              }
+            }
+          }
+        }
+      };
+
+  std::function<void(const ASTNode &, const std::string &, const ScopeStack &,
+                     const ASTNode &, const std::string &,
+                     std::set<const void *> &)>
+      walkNode = [&](const ASTNode &node, const std::string &domName,
+                     const ScopeStack &scope, const ASTNode &topReportNode,
+                     const std::string &topOpName,
+                     std::set<const void *> &visitedCallables) {
+        if (!node || domName.empty()) {
+          return;
+        }
+        switch (node->getNodeType()) {
+        case AST::Stream: {
+          auto s = std::static_pointer_cast<StreamNode>(node);
+          walkNode(s->getLeft(), domName, scope, topReportNode, topOpName,
+                   visitedCallables);
+          walkNode(s->getRight(), domName, scope, topReportNode, topOpName,
+                   visitedCallables);
+          break;
+        }
+        case AST::List: {
+          for (const auto &child : node->getChildren()) {
+            walkNode(child, domName, scope, topReportNode, topOpName,
+                     visitedCallables);
+          }
+          break;
+        }
+        case AST::Expression: {
+          auto expr = std::static_pointer_cast<ExpressionNode>(node);
+          if (expr->isUnary()) {
+            walkNode(expr->getValue(), domName, scope, topReportNode, topOpName,
+                     visitedCallables);
+          } else {
+            walkNode(expr->getLeft(), domName, scope, topReportNode, topOpName,
+                     visitedCallables);
+            walkNode(expr->getRight(), domName, scope, topReportNode, topOpName,
+                     visitedCallables);
+          }
+          break;
+        }
+        case AST::Entity:
+        case AST::Array: {
+          ASTNode rep = topReportNode ? topReportNode : node;
+          auto decl = ASTQuery::findDeclarationForNode(node, scope, tree);
+          if (decl) {
+            std::string rawName = decl->getName();
+            std::string displayOp =
+                (!topOpName.empty() && !rawName.empty() && rawName[0] == '_')
+                    ? topOpName
+                    : rawName;
+            checkDeclResources(decl, displayOp, rep, domName);
+            auto typeDecl = ASTQuery::findTypeDeclaration(decl, scope, tree);
+            if (typeDecl) {
+              checkDeclResources(typeDecl, displayOp, rep, domName);
+            }
+          }
+          if (node->getNodeType() == AST::Array) {
+            walkNode(std::static_pointer_cast<ArrayNode>(node)->index(), domName,
+                     scope, topReportNode, topOpName, visitedCallables);
+          }
+          break;
+        }
+        case AST::Function: {
+          auto func = std::static_pointer_cast<FunctionNode>(node);
+          ASTNode rep = topReportNode ? topReportNode : node;
+          std::string fnName = stripQualifier(func->getName());
+          std::string displayOp =
+              (!topOpName.empty() && !fnName.empty() && fnName[0] == '_')
+                  ? topOpName
+                  : fnName;
+          std::string nextTopOp = topOpName;
+          if (nextTopOp.empty() && !fnName.empty() && fnName[0] != '_') {
+            nextTopOp = fnName;
+          }
+
+          for (const auto &prop : func->getProperties()) {
+            if (prop) {
+              walkNode(prop->getValue(), domName, scope, topReportNode,
+                       topOpName, visitedCallables);
+            }
+          }
+
+          if (fnName == "Sleep") {
+            std::string targetDom = domName;
+            if (auto domProp = func->getPropertyValue("domain")) {
+              std::string cand = stripQualifier(ASTQuery::getNodeName(domProp));
+              if (allDomains.count(cand)) {
+                targetDom = cand;
+              }
+            }
+            auto targetDomDecl =
+                allDomains.count(targetDom) ? allDomains[targetDom] : nullptr;
+            std::shared_ptr<DeclarationNode> sleepModDecl;
+            if (targetDomDecl) {
+              if (auto smProp = targetDomDecl->getPropertyValue("sleepModule")) {
+                if (smProp->getNodeType() != AST::None) {
+                  sleepModDecl =
+                      ASTQuery::findDeclarationForNode(smProp, scope, tree);
+                }
+              }
+            }
+            if (!sleepModDecl) {
+              sleepModDecl =
+                  ASTQuery::findDeclarationByName("__AvrSleepMs", {}, tree);
+            }
+            if (sleepModDecl) {
+              checkDeclResources(sleepModDecl, "Sleep", rep, targetDom);
+              if (targetDom != domName) {
+                checkDeclResources(sleepModDecl, "Sleep", rep, domName);
+              }
+            } else if (targetDomDecl && isIsolatedDomain(targetDomDecl)) {
+              emitError(LangError::MissingDomainResource, rep,
+                        {"Sleep", "_SleepTimer", targetDom});
+            }
+          }
+
+          auto decl = ASTQuery::findDeclarationForNode(func, scope, tree);
+          if (decl) {
+            checkDeclResources(decl, displayOp, rep, domName);
+            if (visitedCallables.insert(decl.get()).second) {
+              ScopeStack subScope = scope;
+              if (auto entities = decl->getPropertyValue("entities")) {
+                if (entities->getNodeType() == AST::List) {
+                  subScope.push_back({decl, entities->getChildren()});
+                  for (const auto &ent : entities->getChildren()) {
+                    if (ent->getNodeType() == AST::Declaration ||
+                        ent->getNodeType() == AST::ArrayDeclaration) {
+                      auto entDecl =
+                          std::static_pointer_cast<DeclarationNode>(ent);
+                      checkDeclResources(entDecl, displayOp, rep, domName);
+                      auto tDecl =
+                          ASTQuery::findTypeDeclaration(entDecl, subScope, tree);
+                      if (tDecl) {
+                        checkDeclResources(tDecl, displayOp, rep, domName);
+                      }
+                      for (const auto &p : entDecl->getProperties()) {
+                        if (p) {
+                          walkNode(p->getValue(), domName, subScope, rep,
+                                   nextTopOp, visitedCallables);
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+              for (const auto &desc :
+                   ASTQuery::getContainedStreamEntities(decl, subScope, tree)) {
+                for (const auto &s : desc.streams) {
+                  walkNode(s, domName, subScope, rep, nextTopOp,
+                           visitedCallables);
+                }
+              }
+              visitedCallables.erase(decl.get());
+            }
+          }
+          break;
+        }
+        default:
+          break;
+        }
+      };
+
+  // Walk top-level streams
+  for (const auto &node : tree->getChildren()) {
+    if (node->getNodeType() == AST::Stream) {
+      auto stream = std::static_pointer_cast<StreamNode>(node);
+      std::string domName = resolveStreamDomain(stream);
+      if (!domName.empty() && activeDomainSet.count(domName)) {
+        std::set<const void *> visitedCallables;
+        walkNode(stream, domName, {}, nullptr, "", visitedCallables);
+      }
+    } else if (node->getNodeType() == AST::Declaration ||
+               node->getNodeType() == AST::ArrayDeclaration) {
+      auto decl = std::static_pointer_cast<DeclarationNode>(node);
+      if (decl->getEntityType() != "_domainDefinition" &&
+          decl->getEntityType() != "gameDefinition" &&
+          !decl->getCompilerProperty("framework")) {
+        std::string domName =
+            stripQualifier(CodeAnalysis::getNodeDomainName(decl, {}, tree));
+        if (!domName.empty() && activeDomainSet.count(domName)) {
+          checkDeclResources(decl, decl->getName(), decl, domName);
+          auto typeDecl = ASTQuery::findTypeDeclaration(decl, {}, tree);
+          if (typeDecl) {
+            checkDeclResources(typeDecl, decl->getName(), decl, domName);
+          }
+        }
+      }
+    }
+  }
+
+  // Walk onLoad, onInit, onReset, and stateMachines of each active domain
+  for (const auto &domName : activeDomains) {
+    auto domDecl = allDomains[domName];
+    for (const char *hook : {"onLoad", "onInit", "onReset"}) {
+      if (auto prop = domDecl->getPropertyValue(hook)) {
+        std::set<const void *> visitedCallables;
+        walkNode(prop, domName, {}, nullptr, "", visitedCallables);
+      }
+    }
+    if (auto smProp = domDecl->getPropertyValue("stateMachines")) {
+      if (smProp->getNodeType() == AST::List) {
+        for (const auto &smNode : smProp->getChildren()) {
+          auto smDecl = ASTQuery::findDeclarationForNode(smNode, {}, tree);
+          if (smDecl) {
+            std::set<const void *> visitedCallables;
+            visitedCallables.insert(smDecl.get());
+            checkDeclResources(smDecl, smDecl->getName(), smNode, domName);
+            for (const auto &desc :
+                 ASTQuery::getContainedStreamEntities(smDecl, {}, tree)) {
+              for (const auto &s : desc.streams) {
+                walkNode(s, domName, {}, nullptr, smDecl->getName(),
+                         visitedCallables);
+              }
+            }
+          }
+        }
+      }
+    }
+
+    // Check 32-instruction hardware limit for ExecutionHardware PIO domains
+    auto execProp = domDecl->getPropertyValue("execution");
+    bool isHardwareExec = false;
+    if (execProp && execProp->getNodeType() != AST::None) {
+      if (auto origin = execProp->getCompilerProperty("resolvedFrom")) {
+        if (origin->getNodeType() == AST::Declaration &&
+            std::static_pointer_cast<DeclarationNode>(origin)->getName() ==
+                "ExecutionHardware") {
+          isHardwareExec = true;
+        }
+      } else if (execProp->getNodeType() == AST::Int) {
+        isHardwareExec =
+            std::static_pointer_cast<ValueNode>(execProp)->getIntValue() == 4;
+      } else {
+        isHardwareExec =
+            stripQualifier(ASTQuery::getNodeName(execProp)) == "ExecutionHardware";
+      }
+    }
+    if (isHardwareExec && effectiveResources[domName].count("_Pio0")) {
+      static const std::set<std::string> pioInstrModules = {
+          "PioPull",     "PioPush",    "PioShiftOut", "PioShiftIn",
+          "PioSetPins",  "PioDelay",   "PioWaitPin",  "PioIrq",
+          "DigitalOut",  "Led",        "_GpioWrite"};
+      size_t pioInstrCount = 0;
+      auto countPioStream = [&](const std::shared_ptr<StreamNode> &st) {
+        if (!st) {
+          return;
+        }
+        std::vector<ASTNode> chain;
+        ASTNode curr = st;
+        while (curr && curr->getNodeType() == AST::Stream) {
+          auto sn = std::static_pointer_cast<StreamNode>(curr);
+          chain.push_back(sn->getLeft());
+          curr = sn->getRight();
+        }
+        if (curr) {
+          chain.push_back(curr);
+        }
+        size_t before = pioInstrCount;
+        for (const auto &m : chain) {
+          if (m && m->getNodeType() == AST::Function) {
+            std::string fn = stripQualifier(
+                std::static_pointer_cast<FunctionNode>(m)->getName());
+            if (pioInstrModules.count(fn)) {
+              ++pioInstrCount;
+            }
+          }
+        }
+        if (pioInstrCount == before && chain.size() == 2 && chain[1] &&
+            chain[1]->getNodeType() == AST::Entity) {
+          std::string dst = stripQualifier(ASTQuery::getNodeName(chain[1]));
+          auto dstDecl = ASTQuery::findDeclarationByName(dst, {}, tree);
+          if (dstDecl && dstDecl->getEntityType() == "state") {
+            ++pioInstrCount; // JMP instruction
+          } else if (chain[0] && chain[0]->getNodeType() == AST::Int) {
+            ++pioInstrCount; // SET scratch register
+          }
+        }
+      };
+
+      for (const auto &node : tree->getChildren()) {
+        if (node->getNodeType() == AST::Stream) {
+          auto st = std::static_pointer_cast<StreamNode>(node);
+          if (resolveStreamDomain(st) == domName) {
+            countPioStream(st);
+          }
+        }
+      }
+      if (auto smProp = domDecl->getPropertyValue("stateMachines")) {
+        if (smProp->getNodeType() == AST::List) {
+          std::set<std::string> visitedStates;
+          std::function<void(const std::string &)> countState =
+              [&](const std::string &sName) {
+                if (sName.empty() || !visitedStates.insert(sName).second) {
+                  return;
+                }
+                auto sDecl = ASTQuery::findDeclarationByName(sName, {}, tree);
+                if (!sDecl || sDecl->getEntityType() != "state") {
+                  return;
+                }
+                for (const auto &desc :
+                     ASTQuery::getContainedStreamEntities(sDecl, {}, tree)) {
+                  for (const auto &st : desc.streams) {
+                    countPioStream(st);
+                    std::function<void(const ASTNode &)> findNext =
+                        [&](const ASTNode &n) {
+                          if (!n) {
+                            return;
+                          }
+                          if (n->getNodeType() == AST::Stream) {
+                            auto sn = std::static_pointer_cast<StreamNode>(n);
+                            findNext(sn->getLeft());
+                            findNext(sn->getRight());
+                          } else if (n->getNodeType() == AST::Entity) {
+                            countState(stripQualifier(ASTQuery::getNodeName(n)));
+                          }
+                        };
+                    findNext(st);
+                  }
+                }
+              };
+          for (const auto &smNode : smProp->getChildren()) {
+            countState(stripQualifier(ASTQuery::getNodeName(smNode)));
+          }
+        }
+      }
+      if (pioInstrCount > 32) {
+        emitError(LangError::PioInstructionOverflow, domDecl,
+                  {domName, std::to_string(pioInstrCount), "_Pio0"});
+      }
+    }
+  }
+
+  return errors;
+}
+
 void CodeValidator::validate() {
   m_errors.clear();
   m_warnings.clear();
@@ -623,6 +1448,7 @@ void CodeValidator::validate() {
   validateLoopIteratorTripCounts(m_tree, m_errors);
   appendDiagnostics(m_errors,
                     ASTValidation::findInvalidConnectionProperties(m_tree));
+  appendDiagnostics(m_errors, findResourceErrors(m_tree));
   validateRates(m_tree);
   validateConstraints(m_tree);
 

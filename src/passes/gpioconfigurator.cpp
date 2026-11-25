@@ -14,6 +14,7 @@
 #include "stride/parser/propertynode.h"
 #include "stride/parser/streamnode.h"
 #include "stride/parser/valuenode.h"
+#include "stride/stridegen/codeanalysis.hpp"
 #include "stride/utils/astquery.h"
 
 #include <filesystem>
@@ -275,8 +276,113 @@ void GpioConfigurator::processGpio() {
     }
     return -1;
   };
+
+  // ExecutionInterrupt domains, and the WriteReadModify GPIO registers that
+  // both an interrupt domain and a cooperative domain write. A cooperative
+  // write to such a register gets clearAddress = 0 (!= setAddress), which
+  // tells the JIT to guard its read-modify-write against the interrupt.
+  std::set<std::string> interruptDomains;
+  auto collectInterruptDomain = [&](const ASTNode &n) {
+    if (!n || n->getNodeType() != AST::Declaration) {
+      return;
+    }
+    auto d = std::static_pointer_cast<DeclarationNode>(n);
+    if (d->getEntityType() != "_domainDefinition" &&
+        d->getEntityType() != "gameDefinition") {
+      return;
+    }
+    if (auto execProp = d->getPropertyValue("execution")) {
+      bool isIsr = false;
+      if (auto origin = execProp->getCompilerProperty("resolvedFrom")) {
+        isIsr = origin->getNodeType() == AST::Declaration &&
+                std::static_pointer_cast<DeclarationNode>(origin)->getName() ==
+                    "ExecutionInterrupt";
+      } else if (execProp->getNodeType() == AST::Int) {
+        isIsr =
+            std::static_pointer_cast<ValueNode>(execProp)->getIntValue() == 1;
+      } else {
+        isIsr = ASTQuery::getNodeName(execProp).find("ExecutionInterrupt") !=
+                std::string::npos;
+      }
+      if (isIsr) {
+        interruptDomains.insert(d->getName());
+      }
+    }
+  };
+  for (const auto &child : m_ctx.tree->getChildren()) {
+    collectInterruptDomain(child);
+  }
+  for (const auto &objects : m_ctx.system->getImportTrees()) {
+    for (const auto &node : objects.second) {
+      collectInterruptDomain(node);
+    }
+  }
+
+  auto streamIsInterrupt = [&](const std::shared_ptr<StreamNode> &s) {
+    std::string domName;
+    std::function<void(const ASTNode &)> findDom = [&](const ASTNode &n) {
+      if (!n || !domName.empty()) {
+        return;
+      }
+      if (n->getNodeType() == AST::Stream) {
+        auto st = std::static_pointer_cast<StreamNode>(n);
+        findDom(st->getRight());
+        findDom(st->getLeft());
+        return;
+      }
+      std::string d = CodeAnalysis::getNodeDomainName(n, {}, m_ctx.tree);
+      size_t pos = d.rfind("::");
+      if (pos != std::string::npos) {
+        d = d.substr(pos + 2);
+      }
+      if (!d.empty()) {
+        domName = d;
+      }
+    };
+    findDom(s);
+    return !domName.empty() && interruptDomains.count(domName) > 0;
+  };
+
+  std::set<int64_t> isrWrittenRmwRegs;
+  std::set<int64_t> coopWrittenRmwRegs;
+  for (const auto &s : streams) {
+    const bool isIsr = streamIsInterrupt(s);
+    std::function<void(const ASTNode &)> scanWrites = [&](const ASTNode &n) {
+      if (!n) {
+        return;
+      }
+      if (n->getNodeType() == AST::Stream) {
+        auto st = std::static_pointer_cast<StreamNode>(n);
+        scanWrites(st->getLeft());
+        scanWrites(st->getRight());
+        return;
+      }
+      if (n->getNodeType() == AST::Function) {
+        auto fn = std::static_pointer_cast<FunctionNode>(n);
+        if (isGpioModuleCall(fn) && fn->getName() != "DigitalIn") {
+          int idx = findPin(fn->getPropertyValue("pin"));
+          if (idx >= 0) {
+            auto acc =
+                HardwareResolver::resolvePinAccess(*hardware, configs[idx]);
+            if (acc && (acc->openDrainEmulated ||
+                        acc->writeStyle != "WriteSetClear")) {
+              int64_t regAddr =
+                  acc->openDrainEmulated ? acc->dirAddress : acc->setAddress;
+              (isIsr ? isrWrittenRmwRegs : coopWrittenRmwRegs).insert(regAddr);
+            }
+          }
+        }
+      }
+    };
+    scanWrites(s);
+  }
+  auto needsIsrGuard = [&](int64_t reg, bool isInterruptDomain) {
+    return !isInterruptDomain && isrWrittenRmwRegs.count(reg) > 0 &&
+           coopWrittenRmwRegs.count(reg) > 0;
+  };
+
   auto expandPinCall = [&](const std::shared_ptr<FunctionNode> &func,
-                           const ASTNode &pinRef) {
+                           const ASTNode &pinRef, bool isInterruptDomain) {
     int index = findPin(pinRef);
     if (index < 0) {
       std::string text = pinRef ? ASTQuery::getNodeName(pinRef) : "nothing";
@@ -331,23 +437,29 @@ void GpioConfigurator::processGpio() {
       return;
     }
     if (access->openDrainEmulated) {
+      // Released (high) clears the direction bit, low sets it: the level is
+      // written inverted to the direction register.
+      bool guard = needsIsrGuard(access->dirAddress, isInterruptDomain);
       setInt("setAddress", access->dirAddress);
-      setInt("clearAddress", access->dirAddress);
+      setInt("clearAddress", guard ? 0 : access->dirAddress);
       setInt("setMask", access->dirMask);
       setInt("clearMask", access->dirMask);
       setSwitch("readModify", true);
       setSwitch("invert", !access->invert);
     } else {
+      bool rmw = access->writeStyle != "WriteSetClear";
+      bool guard = rmw && needsIsrGuard(access->setAddress, isInterruptDomain);
       setInt("setAddress", access->setAddress);
-      setInt("clearAddress", access->clearAddress);
+      setInt("clearAddress", guard ? 0 : access->clearAddress);
       setInt("setMask", access->setMask);
       setInt("clearMask", access->clearMask);
-      setSwitch("readModify", access->writeStyle != "WriteSetClear");
+      setSwitch("readModify", rmw);
       setSwitch("invert", access->invert);
     }
   };
 
-  std::function<void(const ASTNode &)> rewrite = [&](const ASTNode &node) {
+  std::function<void(const ASTNode &, bool)> rewrite =
+      [&](const ASTNode &node, bool isInterruptDomain) {
     if (!node || node->getNodeType() != AST::Stream) {
       return;
     }
@@ -363,11 +475,11 @@ void GpioConfigurator::processGpio() {
       if (isGpioModuleCall(func) && func->getName() == "DigitalIn" &&
           !func->getPropertyValue("pin") &&
           right->getNodeType() == AST::Stream) {
-        expandPinCall(func, left);
+        expandPinCall(func, left, isInterruptDomain);
         stream->setLeft(func);
         stream->setRight(
             std::static_pointer_cast<StreamNode>(right)->getRight());
-        rewrite(stream);
+        rewrite(stream, isInterruptDomain);
         return;
       }
     }
@@ -376,7 +488,7 @@ void GpioConfigurator::processGpio() {
         auto func = std::static_pointer_cast<FunctionNode>(part);
         if (isGpioModuleCall(func)) {
           if (auto pinRef = func->getPropertyValue("pin")) {
-            expandPinCall(func, pinRef);
+            expandPinCall(func, pinRef, isInterruptDomain);
           } else if (!func->getPropertyValue("inAddress") &&
                      !func->getPropertyValue("setAddress")) {
             addError(func->getFilename(), func->getLine(),
@@ -385,9 +497,9 @@ void GpioConfigurator::processGpio() {
         }
       }
     }
-    rewrite(stream->getRight());
+    rewrite(stream->getRight(), isInterruptDomain);
   };
   for (const auto &s : streams) {
-    rewrite(s);
+    rewrite(s, streamIsInterrupt(s));
   }
 }
