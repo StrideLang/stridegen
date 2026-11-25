@@ -22,14 +22,14 @@
     Author: Andres Cabrera
 */
 
-#ifndef STREAMPLATFORM_H
-#define STREAMPLATFORM_H
+#ifndef STRIDEFRAMEWORK_HPP
+#define STRIDEFRAMEWORK_HPP
 
 #include <map>
+#include <set>
 #include <string>
 #include <utility>
-
-#include "stride/stridegen/codevalidator.hpp"
+#include <vector>
 
 #include "stride/parser/ast.h"
 #include "stride/parser/declarationnode.h"
@@ -61,60 +61,60 @@ public:
   std::string getRootNamespace() const;
   bool getRequired() const;
   PlatformAPI getAPI() const;
-  std::string buildPlatformPath();
-  std::string buildPlatformLibPath();
-  std::string buildTestingLibPath();
+  std::string buildPlatformPath() const;
+  std::string buildPlatformLibPath() const;
+  std::string buildTestingLibPath() const;
 
-  std::string getPlatformDetails();
+  std::string getPlatformDetails() const;
 
   void installFramework();
 
-  std::vector<std::string> getDomainIds();
+  std::vector<std::string> getDomainIds() const;
 
-  std::vector<ASTNode> loadImport(std::string importName, std::string importAs);
-  //  void addTree(std::string treeName, ASTNode treeRoot);
-  void addTestingTree(std::string treeName, ASTNode treeRoot);
+  std::vector<ASTNode> loadImport(const std::string &importName,
+                                  const std::string &importAs);
+  void addTestingTree(const std::string &treeName, ASTNode treeRoot);
 
-  std::map<std::string, std::vector<ASTNode>> getFrameworkMembers();
+  std::map<std::string, std::vector<ASTNode>> getFrameworkMembers() const;
 
-  std::vector<ASTNode> getPlatformObjectsReference();
-  std::vector<ASTNode> getPlatformTestingObjectsRef();
+  std::vector<ASTNode> getPlatformObjects() const;
+  std::vector<ASTNode> getPlatformTestingObjects() const;
 
   bool getPluginDetails(std::string &pluginName, int &majorVersion,
-                        int &minorVersion);
+                        int &minorVersion) const;
 
   std::vector<std::pair<std::string, std::string>> getInheritedList() const;
 
 protected:
-  std::vector<ASTNode> loadFrameworkRoot(std::string frameworkRoot);
+  std::vector<ASTNode> loadFrameworkRoot(const std::string &frameworkRoot);
 
   std::vector<std::string>
-  getInheritedFrameworkPaths(std::string frameworkLibPath);
+  getInheritedFrameworkPaths(const std::string &frameworkLibPath,
+                             std::set<std::string> &visited);
 
   std::vector<std::pair<std::string, std::string>>
-  loadInheritedList(std::string frameworkLibPath);
+  loadInheritedList(const std::string &frameworkLibPath);
 
 private:
+  void tagFrameworkNodes(std::vector<ASTNode> &nodes) const;
+
   std::string m_strideRoot;
   std::string m_framework;
   std::string m_frameworkVersion;
   std::string m_hardware;
   std::string m_hardwareVersion;
   std::string m_rootNamespace;
-  std::string m_inherits;
-  std::string m_inheritsVersion;
 
   std::vector<std::string> m_inheritedPaths;
   std::vector<std::pair<std::string, std::string>> m_inheritedList;
+  std::set<std::string> m_loading;
 
-  bool m_required;
-  PlatformAPI m_api{
-      PluginPlatform}; // TODO Put back support for plugin platforms
-                       //  std::map<std::string, ASTNode> m_platformTrees;
+  bool m_required{false};
+  PlatformAPI m_api{PluginPlatform};
   std::map<std::string, ASTNode> m_platformTestTrees;
 
   std::vector<FrameworkTree> m_trees;
 };
 } // namespace strd
 
-#endif // STREAMPLATFORM_H
+#endif // STRIDEFRAMEWORK_HPP

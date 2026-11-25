@@ -30,35 +30,20 @@
 
 namespace strd {
 
-struct PolicyBindingRule {
-  std::string policy;        // e.g. "Optimal", "Fast", "Accurate", "Compact"
-  std::string functionName;  // e.g. "Sin" or "Math::Sin"
-  std::string targetVariant; // e.g. "Sin@Direct", "Sin@Poly5"
-  std::string targetTag;     // e.g. "Direct", "Poly5"
-};
-
 class PlatformPolicyManager {
 public:
   PlatformPolicyManager();
   ~PlatformPolicyManager();
 
-  // Loads platform definition from
-  // <strideroot>/platforms/<platformName>/Platform.stride If targetDevice is
-  // empty, falls back to defaultDevice from Platform.stride. Resolves the
-  // device overlay chain and builds the aggregated policy table and resource
-  // list.
   bool loadPlatform(const std::string &strideroot,
                     const std::string &platformName,
                     const std::string &targetDevice = "");
 
-  // Resolves variant for an unannotated function/entity within a policy
-  // context. Returns targetVariant name (e.g. "Sin@Direct"), and optionally
-  // outputs variant tag (e.g. "Direct"). Returns empty string if no rule found.
   std::string resolveVariant(const std::string &policyName,
                              const std::string &functionName,
                              std::string *outVariantTag = nullptr) const;
 
-  bool hasBindingForFunction(const std::string &functionName) const;
+  bool hasAnyPolicyBinding(const std::string &functionName) const;
 
   const std::string &getPlatformName() const { return m_platformName; }
   const std::string &getTargetDevice() const { return m_targetDevice; }

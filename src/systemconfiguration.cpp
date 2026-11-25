@@ -24,69 +24,98 @@
 
 #include "stride/stridegen/systemconfiguration.hpp"
 #include "stride/utils/astfunctions.h"
+#include "stride/utils/logger.h"
 
+#include <cctype>
 #include <fstream>
-#include <iostream>
 
 using namespace strd;
 
-SystemConfiguration::SystemConfiguration() {
-  //  resourceConfigurations["all"] = ConfigMap();
+namespace {
+
+std::string capitalizeConfigKey(std::string key) {
+  if (key.empty()) {
+    return key;
+  }
+  if (key[0] == '_') {
+    if (key.size() > 1) {
+      key[1] = static_cast<char>(
+          std::toupper(static_cast<unsigned char>(key[1])));
+    }
+  } else {
+    key[0] =
+        static_cast<char>(std::toupper(static_cast<unsigned char>(key[0])));
+  }
+  return key;
 }
+
+std::string uncapitalizeConfigKey(std::string key) {
+  if (key.empty()) {
+    return key;
+  }
+  if (key[0] == '_') {
+    if (key.size() > 1) {
+      key[1] = static_cast<char>(
+          std::tolower(static_cast<unsigned char>(key[1])));
+    }
+  } else {
+    key[0] =
+        static_cast<char>(std::tolower(static_cast<unsigned char>(key[0])));
+  }
+  return key;
+}
+
+} // namespace
+
+SystemConfiguration::SystemConfiguration() = default;
 
 void SystemConfiguration::readConfiguration(std::string filename) {
   std::string configFilename = filename + ".config";
   ASTNode configFile = AST::parseFile(configFilename.c_str());
-  if (configFile) {
-    for (ASTNode configNode : configFile->getChildren()) {
-      if (configNode->getNodeType() == AST::Declaration) {
-        std::shared_ptr<DeclarationNode> configDecl =
-            std::static_pointer_cast<DeclarationNode>(configNode);
-        if (configDecl->getEntityType() == "config") {
-          std::string framework;
-          auto frameworkNode = configDecl->getPropertyValue("framework");
-          if (frameworkNode && frameworkNode->getNodeType() == AST::String) {
-            framework = std::static_pointer_cast<ValueNode>(frameworkNode)
-                            ->getStringValue();
-          }
+  if (!configFile) {
+    return;
+  }
 
-          if (configDecl->getPropertyValue("resourceConfigValues")) {
-            for (auto configOption :
-                 configDecl->getPropertyValue("resourceConfigValues")
-                     ->getChildren()) {
-              if (configOption->getNodeType() == AST::Declaration) {
-                // TODO Should we support DeclarationBundle too?
-                auto configOptionDecl =
-                    std::static_pointer_cast<DeclarationNode>(configOption);
-                std::string optionName = configOptionDecl->getName();
-                resourceConfigurations["all"].push_back(configOptionDecl);
-              }
-            }
+  for (const ASTNode &configNode : configFile->getChildren()) {
+    if (!configNode || configNode->getNodeType() != AST::Declaration) {
+      continue;
+    }
+    auto configDecl = std::static_pointer_cast<DeclarationNode>(configNode);
+    if (configDecl->getEntityType() == "config") {
+      std::string framework = "all";
+      if (auto fwNode = configDecl->getPropertyValue("framework");
+          fwNode && fwNode->getNodeType() == AST::String) {
+        std::string fw =
+            std::static_pointer_cast<ValueNode>(fwNode)->getStringValue();
+        if (!fw.empty()) {
+          framework = fw;
+        }
+      }
+      if (auto resValues = configDecl->getPropertyValue("resourceConfigValues")) {
+        for (const auto &configOption : resValues->getChildren()) {
+          if (configOption && configOption->getNodeType() == AST::Declaration) {
+            resourceConfigurations[framework].push_back(
+                std::static_pointer_cast<DeclarationNode>(configOption));
           }
-        } else if (configDecl->getEntityType() == "override") {
-          for (auto configOptions : configDecl->getProperties()) {
-            std::string optionName = configOptions->getName();
-            // TODO more robust capitalization
-            if (optionName[0] == '_') {
-              if (optionName[1] >= 'a' && optionName[1 <= 'z']) {
-                optionName[1] += 'A' - 'a';
-              }
-              //                            optionName[1] =
-              //                            optionName[1].toUpper();
-            } else {
-              optionName[0] += 'A' - 'a';
-            }
-            ASTNode configValue = configOptions->getValue();
-            if (configValue->getNodeType() == AST::String) {
-              overrides["all"][optionName] =
-                  std::static_pointer_cast<ValueNode>(configValue)
-                      ->getStringValue();
-            } else if (configValue->getNodeType() == AST::Int) {
-              overrides["all"][optionName] =
-                  std::static_pointer_cast<ValueNode>(configValue)
-                      ->getIntValue();
-            }
-          }
+        }
+      }
+    } else if (configDecl->getEntityType() == "override") {
+      for (const auto &configOption : configDecl->getProperties()) {
+        if (!configOption || !configOption->getValue()) {
+          continue;
+        }
+        std::string optionName = capitalizeConfigKey(configOption->getName());
+        ASTNode configValue = configOption->getValue();
+        if (configValue->getNodeType() == AST::String) {
+          overrides["all"][optionName] =
+              std::static_pointer_cast<ValueNode>(configValue)
+                  ->getStringValue();
+        } else if (configValue->getNodeType() == AST::Int) {
+          overrides["all"][optionName] =
+              std::static_pointer_cast<ValueNode>(configValue)->getIntValue();
+        } else if (configValue->getNodeType() == AST::Real) {
+          overrides["all"][optionName] =
+              std::static_pointer_cast<ValueNode>(configValue)->getRealValue();
         }
       }
     }
@@ -95,51 +124,37 @@ void SystemConfiguration::readConfiguration(std::string filename) {
 
 void SystemConfiguration::writeConfiguration(std::string filename) {
   std::ofstream configFile(filename);
-
   if (!configFile.good()) {
-    std::cerr << "Error opening code file for writing!" << std::endl;
-    ;
-    //        throw;
+    LOG_ERROR() << "Error opening configuration file '" << filename
+                << "' for writing!" << std::endl;
     return;
   }
-  std::string presetName = "Preset";
-  for (auto frameworkConfig : resourceConfigurations) {
-    configFile << "config " << presetName << "{" << std::endl;
-    configFile << "    framework: \"" << frameworkConfig.first << "\""
-               << std::endl;
 
-    configFile << "    resourceConfigValues: [" << std::endl;
-    for (auto option = frameworkConfig.second.cbegin();
-         option != frameworkConfig.second.cend(); ++option) {
-      configFile << AST::toText(*option, 4);
+  const std::string presetName = "Preset";
+  for (const auto &[frameworkName, entries] : resourceConfigurations) {
+    configFile << "config " << presetName << " {\n";
+    configFile << "    framework: \"" << frameworkName << "\"\n";
+    configFile << "    resourceConfigValues: [\n";
+    for (const auto &option : entries) {
+      configFile << AST::toText(option, 4);
     }
-    configFile << "    ]\n}\n" << std::endl;
-
-    configFile << "override Test {\n" << std::endl;
-    for (auto option = overrides["all"].cbegin();
-         option != overrides["all"].cend(); ++option) {
-      std::string optionName = option->first;
-      // TODO more robust capitalization
-      if (optionName[0] == '_') {
-        if (optionName[1] >= 'A' && optionName[1 <= 'Z']) {
-          optionName[1] -= 'A' - 'a';
-        }
-        //                            optionName[1] =
-        //                            optionName[1].toLower();
-      } else {
-        optionName[0] -= 'A' - 'a';
-      }
-      configFile << "    " << optionName.c_str() << ": " << std::endl;
-      if (std::holds_alternative<std::string>(option->second)) {
-        configFile << "\"" << std::get<std::string>(option->second) << "\"";
-      } else if (std::holds_alternative<int64_t>(option->second)) {
-        configFile << std::to_string(std::get<int64_t>(option->second));
-      } else if (std::holds_alternative<double>(option->second)) {
-        configFile << std::to_string(std::get<double>(option->second));
-      }
-      configFile << std::endl;
-    }
-    configFile << "}" << std::endl;
+    configFile << "    ]\n}\n\n";
   }
-  configFile.close();
+
+  if (auto ovIt = overrides.find("all");
+      ovIt != overrides.end() && !ovIt->second.empty()) {
+    configFile << "override Test {\n";
+    for (const auto &[key, val] : ovIt->second) {
+      configFile << "    " << uncapitalizeConfigKey(key) << ": ";
+      if (std::holds_alternative<std::string>(val)) {
+        configFile << "\"" << std::get<std::string>(val) << "\"";
+      } else if (std::holds_alternative<int64_t>(val)) {
+        configFile << std::to_string(std::get<int64_t>(val));
+      } else if (std::holds_alternative<double>(val)) {
+        configFile << std::to_string(std::get<double>(val));
+      }
+      configFile << "\n";
+    }
+    configFile << "}\n";
+  }
 }

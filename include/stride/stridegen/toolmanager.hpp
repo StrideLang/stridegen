@@ -25,9 +25,10 @@
 #ifndef TOOLMANAGER_HPP
 #define TOOLMANAGER_HPP
 
-#include <iostream>
 #include <map>
+#include <memory>
 #include <string>
+#include <vector>
 
 #include "stride/parser/ast.h"
 
@@ -57,24 +58,24 @@ struct PathSearch {
 
 class ToolManager {
 public:
-  ToolManager() {}
-  ToolManager(std::string strideRoot);
+  ToolManager() = default;
+  explicit ToolManager(std::string strideRoot);
 
-  void setStrideRoot(std::string strideRoot) { m_strideRoot = strideRoot; }
+  void setStrideRoot(const std::string &strideRoot) {
+    m_strideRoot = strideRoot;
+  }
 
   void readTemplates();
-
   void readLocalConfigs();
-
   void updateAllLocalConfigs();
 
-  std::map<std::string, std::string> localTools;
+  std::string findTool(const std::string &key) const;
 
+  std::map<std::string, std::string> localTools;
   std::vector<std::shared_ptr<ToolTemplate>> toolTemplates;
   std::map<std::string, std::shared_ptr<ToolSearch>> toolSearches;
 
   std::map<std::string, std::string> localPaths;
-
   std::vector<std::shared_ptr<PathTemplate>> pathTemplates;
   std::map<std::string, std::shared_ptr<PathSearch>> pathSearches;
 

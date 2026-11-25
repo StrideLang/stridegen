@@ -1,5 +1,6 @@
 /*
-    Stride is licensed under the terms of the GNU Affero General Public License version 3.
+    Stride is licensed under the terms of the GNU Affero General Public License
+   version 3.
 
     Copyright (C) 2022-2026 Andres Cabrera
     All rights reserved.
@@ -22,126 +23,103 @@
     Author: Andres Cabrera
 */
 
-#ifndef STRIDEGEN_H
-#define STRIDEGEN_H
+#ifndef CODEVALIDATOR_HPP
+#define CODEVALIDATOR_HPP
+
+#include <string>
+#include <vector>
 
 #include "stride/parser/strideparser.h"
+#include "stride/utils/astquery.h"
 
 namespace strd {
-class StrideSystem;
-
-typedef std::vector<std::pair<ASTNode, std::vector<ASTNode>>> ScopeStack;
 
 class CodeValidator {
 public:
-  typedef enum { NO_OPTIONS = 0x00, NO_RATE_VALIDATION = 0x01 } Options;
+  enum Options { NO_OPTIONS = 0x00, NO_RATE_VALIDATION = 0x01 };
 
-  CodeValidator(ASTNode tree = nullptr, Options options = NO_OPTIONS);
-  ~CodeValidator();
+  explicit CodeValidator(const ASTNode &tree = nullptr,
+                         Options options = NO_OPTIONS);
+  ~CodeValidator() = default;
 
-  bool isValid();
-  bool platformIsValid();
+  bool isValid() const { return m_errors.empty(); }
 
-  std::vector<LangError> getErrors();
+  const std::vector<LangError> &getErrors() const { return m_errors; }
   // Warnings don't make the tree invalid, e.g. lossy conversions
-  std::vector<LangError> getWarnings();
-  std::vector<std::string> getPlatformErrors();
-
-  // Static functions -----------------------------
-
-  static std::vector<StreamNode *> getStreamsAtLine(ASTNode tree, int line);
+  const std::vector<LangError> &getWarnings() const { return m_warnings; }
 
   // Conversions in a resolved tree that can lose data or change values:
   // narrowing, signed to unsigned, float to integer, integers too large for
   // a float, and mixed operands whose promoted type can't hold both. Literals
   // that fit the destination type aren't reported. Each one is a
   // LossyConversion warning with tokens {from, to, reason}.
-  static std::vector<LangError> findLossyConversions(ASTNode tree);
+  static std::vector<LangError> findLossyConversions(const ASTNode &tree);
 
   // Calls in a resolved tree that could not be broadcast automatically
   // because their input bundles have different widths ([A[0:8], B[0:7]] >>
   // Equal()). Each one is a StreamMemberSizeMismatch error.
-  static std::vector<LangError> findBroadcastMismatches(ASTNode tree);
+  static std::vector<LangError> findBroadcastMismatches(const ASTNode &tree);
 
-  // Writes to constants after their first: a constant with a value is
-  // written by it, and one without a value is written once, by the first
-  // stream that writes it (constant Table[8] { type: Int } filled at setup).
-  // Each later write is a ConstantWrittenTwice error.
-  static std::vector<LangError> findConstantRewrites(ASTNode tree);
-
-  // Calls of functions with blocks sized by a main port whose size nothing
+  // Calls of functions with entities sized by a main port whose size nothing
   // gives: Output[OutputPort.size] takes the size of what the call writes
   // to, so the call must write to a declared array, element or bundle, and
   // Input[InputPort.size] needs the call to be fed. Each is an UnsizedPort
   // error.
-  static std::vector<LangError> findUnsizedPorts(ASTNode tree);
-
-  // Reactions and actions that declare a mainInputPort. Their input is the
-  // trigger that runs them (a switch converts to one), which also sets their
-  // domain, so values reach them through property ports. Each is a
-  // ReactionMainInput error.
-  static std::vector<LangError> findReactionMainInputs(ASTNode tree);
+  static std::vector<LangError> findUnsizedPorts(const ASTNode &tree);
 
   // Reads across domains: a signal in one domain read from another domain is
   // valid only if the domains share a common ancestor domain (shared memory)
   // or an explicit connection exists between them.
-  static std::vector<LangError> findInvalidCrossDomainAccess(ASTNode tree);
-
-  // Property overrides on connections: checks that overridden properties match
-  // properties declared on the connection blueprint and satisfy constraints.
-  static std::vector<LangError> findInvalidConnectionProperties(ASTNode tree);
+  static std::vector<LangError>
+  findInvalidCrossDomainAccess(const ASTNode &tree);
 
 private:
-  void validateTree(ASTNode tree);
   void validate();
 
-  void validatePlatform(ASTNode node, std::vector<LangError> &errors);
+  void validateArraySizes(const ASTNode &node, std::vector<LangError> &errors,
+                          const ScopeStack &scope);
+  void validateStreamSizes(const ASTNode &tree, std::vector<LangError> &errors,
+                           const ScopeStack &scope);
+  void validateLoopIteratorTripCounts(const ASTNode &tree,
+                                      std::vector<LangError> &errors);
+  void validateRates(const ASTNode &tree);
+  void validateConstraints(const ASTNode &tree);
 
-  void validateArrayIndices(ASTNode node, std::vector<LangError> &errors,
-                            ScopeStack scope);
-  void validateArraySizes(ASTNode node, std::vector<LangError> &errors,
-                          ScopeStack scope);
-  void validateSymbolUniqueness(ScopeStack scope,
-                                std::vector<LangError> &errors);
-  void validateStreamSizes(ASTNode tree, std::vector<LangError> &errors,
-                           ScopeStack scope);
-  void validateRates(ASTNode tree);
-  void validateConstraints(ASTNode tree);
-
-  void sortErrors();
+  void sortDiagnostics();
 
   void validateStreamInputSize(StreamNode *stream,
                                std::vector<LangError> &errors,
-                               ScopeStack scope);
+                               const ScopeStack &scope);
+  void validateNodeRate(const ASTNode &node, const ASTNode &tree);
 
-  void validateNodeRate(ASTNode node, ASTNode tree);
-
-  void validateConstraints(std::shared_ptr<StreamNode> stream,
-                           ScopeStack scopeStack, ASTNode tree);
-  void validateFunctionConstraints(std::shared_ptr<FunctionNode> function,
-                                   ScopeStack scopeStack, ASTNode tree);
-
+  void validateConstraintsForStream(std::shared_ptr<StreamNode> stream,
+                                    const ScopeStack &scopeStack,
+                                    const ASTNode &tree);
+  void
+  validateFunctionConstraints(const std::shared_ptr<FunctionNode> &function,
+                              ScopeStack scopeStack, const ASTNode &tree);
   void validateConstraintStream(std::shared_ptr<StreamNode> stream,
-                                std::shared_ptr<FunctionNode> function,
-                                std::shared_ptr<DeclarationNode> declaration,
-                                ScopeStack scopeStack, ASTNode tree);
-
+                                const std::shared_ptr<FunctionNode> &function,
+                                const std::shared_ptr<DeclarationNode> &decl,
+                                const ScopeStack &scopeStack,
+                                const ASTNode &tree);
   std::vector<ASTNode>
-  resolveConstraintNode(ASTNode node, std::vector<ASTNode> previous,
-                        std::shared_ptr<FunctionNode> function,
-                        std::shared_ptr<DeclarationNode> declaration,
-                        ScopeStack scopeStack, ASTNode tree);
+  resolveConstraintNode(const ASTNode &node,
+                        const std::vector<ASTNode> &previous,
+                        const std::shared_ptr<FunctionNode> &function,
+                        const std::shared_ptr<DeclarationNode> &decl,
+                        const ScopeStack &scopeStack, const ASTNode &tree);
 
-  int getEntityDataSize(std::shared_ptr<DeclarationNode> declaration,
-                        ScopeStack scope,
+  int getEntityDataSize(const std::shared_ptr<DeclarationNode> &declaration,
+                        const ScopeStack &scope,
                         std::vector<LangError> *errors = nullptr);
 
-  std::shared_ptr<StrideSystem> m_system;
   ASTNode m_tree;
   std::vector<LangError> m_errors;
   std::vector<LangError> m_warnings;
   Options m_options;
 };
+
 } // namespace strd
 
-#endif // STRIDEGEN_H
+#endif // CODEVALIDATOR_HPP

@@ -25,155 +25,153 @@
 #ifndef STRIDESYSTEM_HPP
 #define STRIDESYSTEM_HPP
 
+#include <map>
+#include <memory>
+#include <set>
+#include <string>
+#include <utility>
+#include <vector>
+
 #include "stride/parser/strideparser.h"
 
-#include "stride/stridegen/builder.hpp"
 #include "stride/stridegen/strideframework.hpp"
 #include "stride/stridegen/systemconfiguration.hpp"
-#include "stride/stridegen/featureresolver.hpp"
+#include "stride/utils/featureresolver.h"
 #include "stride/utils/stridelibrary.h"
 
 namespace strd {
-typedef struct {
-  ASTNode sourceStreams;
-  ASTNode sourceImports;
-  ASTNode sourceEntities;
-  ASTNode destStreams;
-  ASTNode destImports;
-  ASTNode destEntities;
-} ConnectionNodes;
+typedef std::vector<std::pair<ASTNode, std::vector<ASTNode>>> ScopeStack;
 
 class StrideSystem {
 public:
-  // includePaths are searched for imports before the standard library: the
-  // program's directory first (sibling files), then the active platform's
-  // hardware folders (boards, devices, cores).
   StrideSystem(std::string strideRoot, std::string systemName, int majorVersion,
-               int minorVersion, std::vector<std::shared_ptr<ImportNode>> importList,
+               int minorVersion,
+               std::vector<std::shared_ptr<ImportNode>> importList,
                FeatureConfig featureConfig = FeatureConfig(),
                std::vector<std::string> includePaths = {});
   ~StrideSystem();
 
-  static std::vector<std::string> listAvailableSystems(std::string strideroot);
+  static std::vector<std::string>
+  listAvailableSystems(const std::string &strideroot);
 
-  std::vector<std::string> getErrors();
-  std::vector<std::string> getWarnings();
-  std::vector<std::string> getPlatformTypeNames();
-  std::vector<std::string> getFunctionNames();
+  const std::vector<std::string> &getErrors() const { return m_errors; }
+  const std::vector<std::string> &getWarnings() const { return m_warnings; }
+  std::vector<std::string> getPlatformTypeNames() const;
+  std::vector<std::string> getFunctionNames() const;
 
-  std::vector<Builder *> createBuilders(std::string fileName, ASTNode tree);
-
-  ASTNode getPlatformDomain(
-      std::string namespaceName = ""); // The platform's default domain
+  ASTNode getPlatformDomain(const std::string &namespaceName = "") const;
 
   std::map<std::string, std::string>
-  getFrameworkTools(std::string namespaceName);
+  getFrameworkTools(const std::string &namespaceName) const;
   std::map<std::string, std::string>
-  getFrameworkPaths(std::string namespaceName);
+  getFrameworkPaths(const std::string &namespaceName) const;
 
-  std::string substituteTokens(std::string namespaceName, std::string text);
-  std::vector<std::string> getFrameworkNames();
+  std::string substituteTokens(const std::string &namespaceName,
+                               std::string text) const;
+  std::vector<std::string> getFrameworkNames() const;
 
-  static std::vector<ASTNode> getOptionTrees(std::string systemPath);
+  static std::vector<ASTNode> getOptionTrees(const std::string &systemPath);
 
-  // if framework != "" then import is limited to the specified framework
-  std::vector<ASTNode> loadImportTree(std::string importName,
-                                      std::string importAs,
-                                      std::string frameworkName = "");
+  // if frameworkName != "" then import is limited to the specified framework
+  std::vector<ASTNode> loadImportTree(const std::string &importName,
+                                      const std::string &importAs,
+                                      const std::string &frameworkName = "");
 
-  // Must be called after parseSystemTree()
-  std::map<std::string, std::vector<ASTNode>> getImportTrees();
+  const std::map<std::string, std::vector<ASTNode>> &getImportTrees() const {
+    return m_systemNodes;
+  }
 
-  std::string getFrameworkAlias(std::string frameworkName);
-  std::string getFrameworkFromAlias(std::string frameworkAlias);
+  std::string getFrameworkAlias(const std::string &frameworkName) const;
+  std::string getFrameworkFromAlias(const std::string &frameworkAlias) const;
 
-  void generateDomainConnections(ASTNode tree);
-  void injectResourceConfiguration(ASTNode tree);
-
-  ConnectionNodes getDomainChangeStreams(std::string previousDomainId,
-                                         std::string nextDomainId,
-                                         ASTNode tree = nullptr);
-
-  static ASTNode substitutePropertiesInAST(
-      ASTNode node, const std::map<std::string, ASTNode> &props);
+  void injectResourceConfiguration(const ASTNode &tree);
 
   const std::vector<std::shared_ptr<DeclarationNode>> &
   getConnectionDefinitions() const {
     return m_connectionDefinitions;
   }
 
-  std::string getCommonAncestorDomain(std::string domainId1,
-                                      std::string domainId2, ASTNode tree);
+  std::shared_ptr<DeclarationNode>
+  getFrameworkOperator(const std::string &platform, const std::string &leftType,
+                       const std::string &rightType, const std::string &type);
 
-  std::string getParentDomain(std::string domainId, ASTNode tree);
+  void installFramework(const std::string &frameworkName);
 
-  std::shared_ptr<DeclarationNode> getFrameworkOperator(std::string platform,
-                                                        std::string leftType,
-                                                        std::string rightType,
-                                                        std::string type);
-
-  void installFramework(std::string frameworkName);
-
-  std::vector<std::shared_ptr<StrideFramework>> getFrameworks() {
+  const std::vector<std::shared_ptr<StrideFramework>> &getFrameworks() const {
     return m_frameworks;
   }
 
   std::vector<std::shared_ptr<DeclarationNode>>
-  getFrameworkSynchronization(std::string frameworkName);
+  getFrameworkSynchronization(const std::string &frameworkName) const;
 
   std::shared_ptr<DeclarationNode>
-  getFrameworkDataType(std::string frameworkName, std::string strideDataType);
+  getFrameworkDataType(const std::string &frameworkName,
+                       const std::string &strideDataType) const;
 
-  std::string getFrameworkDefaultDataType(std::string frameworkName);
+  std::string
+  getFrameworkDefaultDataType(const std::string &frameworkName) const;
 
   std::vector<std::shared_ptr<DeclarationNode>>
-  getFrameworkOperators(std::string frameworkName);
+  getFrameworkOperators(const std::string &frameworkName) const;
 
   std::vector<std::pair<std::string, std::string>>
-  getFrameworkAliasInherits(std::string frameworkAlias);
+  getFrameworkAliasInherits(const std::string &frameworkAlias) const;
 
-  std::string getDataType(ASTNode node, const ScopeStack &scope, ASTNode tree);
+  std::string getDataType(const ASTNode &node, const ScopeStack &scope,
+                          const ASTNode &tree) const;
 
-  std::vector<std::shared_ptr<StrideFramework>> m_frameworks;
-  std::vector<std::shared_ptr<DeclarationNode>> m_platformDefinitions;
-  std::vector<std::shared_ptr<DeclarationNode>>
-      m_connectionDefinitions; // Connections between frameworks
-  std::map<std::string, std::shared_ptr<DeclarationNode>>
-      m_synchronization; // Connections between domains
-  SystemConfiguration m_systemConfig;
+  const std::vector<std::shared_ptr<DeclarationNode>> &
+  getPlatformDefinitions() const {
+    return m_platformDefinitions;
+  }
 
-  std::string getStrideRoot() const;
-  void setStrideRoot(const std::string &strideRoot);
+  const SystemConfiguration &getSystemConfiguration() const {
+    return m_systemConfig;
+  }
+  SystemConfiguration &getSystemConfiguration() { return m_systemConfig; }
+  void setSystemConfiguration(const SystemConfiguration &config) {
+    m_systemConfig = config;
+  }
 
-  std::vector<std::string> listAvailableImports();
+  const std::string &getStrideRoot() const { return m_strideRoot; }
+  void setStrideRoot(const std::string &strideRoot) {
+    m_strideRoot = strideRoot;
+  }
 
-  const std::string &systemName() const;
+  std::vector<std::string> listAvailableImports() const;
+
+  const std::string &systemName() const { return m_systemName; }
 
   const FeatureConfig &getFeatureConfig() const { return m_featureConfig; }
-  void setFeatureConfig(const FeatureConfig &config) { m_featureConfig = config; }
+  void setFeatureConfig(const FeatureConfig &config) {
+    m_featureConfig = config;
+  }
 
 private:
   std::shared_ptr<DeclarationNode>
-  findDataTypeInPath(std::string path, std::string strideDataType);
-  std::string findDefaultDataTypeInPath(std::string path);
+  findDataTypeInFramework(const std::shared_ptr<StrideFramework> &fw,
+                          const std::string &strideDataType) const;
+  std::shared_ptr<DeclarationNode>
+  findDataTypeInPath(const std::string &path, const std::string &strideDataType,
+                     std::set<std::string> &visited) const;
+  std::string findDefaultDataTypeInPath(const std::string &path,
+                                        std::set<std::string> &visited) const;
 
-  std::string makeProject(std::string fileName);
-
-  void parseSystemTree(ASTNode systemTree, ASTNode configuration = nullptr);
+  void initializeFromSystemTree(const ASTNode &systemTree);
 
   std::string m_strideRoot;
   std::string m_systemName;
   int m_majorVersion;
   int m_minorVersion;
   std::string m_systemPath;
-  std::string m_rootPath;
 
   std::vector<std::string> m_errors;
   std::vector<std::string> m_warnings;
 
-  std::vector<std::string> m_types;
-
-  std::map<std::string, std::string> m_importList;
+  std::vector<std::shared_ptr<StrideFramework>> m_frameworks;
+  std::vector<std::shared_ptr<DeclarationNode>> m_platformDefinitions;
+  std::vector<std::shared_ptr<DeclarationNode>> m_connectionDefinitions;
+  SystemConfiguration m_systemConfig;
 
   std::map<std::string, std::vector<ASTNode>> m_systemNodes;
 

@@ -1,5 +1,6 @@
 /*
-    Stride is licensed under the terms of the GNU Affero General Public License version 3.
+    Stride is licensed under the terms of the GNU Affero General Public License
+   version 3.
 
     Copyright (C) 2026 Andres Cabrera
     All rights reserved.
@@ -20,19 +21,48 @@
 
 #include "stride/stridegen/platformpolicymanager.hpp"
 #include "stride/stridegen/hardwareresolver.hpp"
-#include "stride/parser/valuenode.h"
 #include "stride/utils/astquery.h"
+#include "stride/utils/logger.h"
 
 #include <algorithm>
 #include <filesystem>
-#include <iostream>
-#include <set>
 
 namespace strd {
 
-PlatformPolicyManager::PlatformPolicyManager() {}
+namespace {
 
-PlatformPolicyManager::~PlatformPolicyManager() {}
+std::string stripNamespace(const std::string &name) {
+  size_t pos = name.rfind("::");
+  return pos == std::string::npos ? name : name.substr(pos + 2);
+}
+
+std::vector<std::string> collectQualifiedNames(const ASTNode &node) {
+  std::vector<std::string> out;
+  if (!node) {
+    return out;
+  }
+  if (node->getNodeType() == AST::List) {
+    for (const auto &child : node->getChildren()) {
+      std::string q = ASTQuery::getQualifiedName(child);
+      if (q.empty()) {
+        q = ASTQuery::valueText(child);
+      }
+      out.push_back(std::move(q));
+    }
+  } else {
+    std::string q = ASTQuery::getQualifiedName(node);
+    if (q.empty()) {
+      q = ASTQuery::valueText(node);
+    }
+    out.push_back(std::move(q));
+  }
+  return out;
+}
+
+} // namespace
+
+PlatformPolicyManager::PlatformPolicyManager() = default;
+PlatformPolicyManager::~PlatformPolicyManager() = default;
 
 void PlatformPolicyManager::clear() {
   m_platformName.clear();
@@ -54,8 +84,8 @@ void PlatformPolicyManager::parsePolicyBindings(
     return;
   }
   for (const auto &bindingNode : prop->getChildren()) {
-    if (bindingNode->getNodeType() != AST::Declaration &&
-        bindingNode->getNodeType() != AST::ArrayDeclaration) {
+    if (!bindingNode || (bindingNode->getNodeType() != AST::Declaration &&
+                         bindingNode->getNodeType() != AST::ArrayDeclaration)) {
       continue;
     }
     auto bDecl = std::static_pointer_cast<DeclarationNode>(bindingNode);
@@ -70,49 +100,33 @@ void PlatformPolicyManager::parsePolicyBindings(
       continue;
     }
 
-    std::string policyFull = ASTQuery::getNodeName(policyProp);
-    std::string policyShort = policyFull;
-    size_t colonPos = policyShort.rfind("::");
-    if (colonPos != std::string::npos) {
-      policyShort = policyShort.substr(colonPos + 2);
+    std::string policyFull = ASTQuery::getQualifiedName(policyProp);
+    if (policyFull.empty()) {
+      policyFull = ASTQuery::valueText(policyProp);
+    }
+    if (policyFull.empty()) {
+      continue;
     }
 
-    std::vector<std::string> funcs;
-    if (funcProp->getNodeType() == AST::List) {
-      for (const auto &child : funcProp->getChildren()) {
-        funcs.push_back(ASTQuery::getNodeName(child));
-      }
-    } else {
-      funcs.push_back(ASTQuery::getNodeName(funcProp));
+    auto funcs = collectQualifiedNames(funcProp);
+    auto targets = collectQualifiedNames(targetProp);
+    if (funcs.size() != targets.size()) {
+      LOG_WARNING() << "policyBinding in " << decl->getName()
+                    << " has mismatched function (" << funcs.size()
+                    << ") and target (" << targets.size() << ") lists."
+                    << std::endl;
     }
 
-    std::vector<std::string> targets;
-    if (targetProp->getNodeType() == AST::List) {
-      for (const auto &child : targetProp->getChildren()) {
-        targets.push_back(ASTQuery::getNodeName(child));
-      }
-    } else {
-      targets.push_back(ASTQuery::getNodeName(targetProp));
-    }
-
-    size_t count = std::min(funcs.size(), targets.size());
+    const std::string policyShort = stripNamespace(policyFull);
+    const size_t count = std::min(funcs.size(), targets.size());
     for (size_t i = 0; i < count; ++i) {
-      const std::string &fn = funcs[i];
-      const std::string &tgt = targets[i];
-      if (fn.empty() || tgt.empty()) {
-        continue;
+      if (!funcs[i].empty() && !targets[i].empty()) {
+        const std::string fnShort = stripNamespace(funcs[i]);
+        m_bindings[{policyShort, fnShort}] = targets[i];
+        m_bindings[{policyFull, fnShort}] = targets[i];
+        m_bindings[{policyShort, funcs[i]}] = targets[i];
+        m_bindings[{policyFull, funcs[i]}] = targets[i];
       }
-
-      std::string fnShort = fn;
-      size_t fnColon = fnShort.rfind("::");
-      if (fnColon != std::string::npos) {
-        fnShort = fnShort.substr(fnColon + 2);
-      }
-
-      m_bindings[{policyShort, fnShort}] = tgt;
-      m_bindings[{policyFull, fnShort}] = tgt;
-      m_bindings[{policyShort, fn}] = tgt;
-      m_bindings[{policyFull, fn}] = tgt;
     }
   }
 }
@@ -135,116 +149,113 @@ bool PlatformPolicyManager::loadPlatform(const std::string &strideroot,
 
   std::shared_ptr<DeclarationNode> platformDecl;
   for (const auto &child : platformTree->getChildren()) {
-    if (child->getNodeType() == AST::Declaration) {
+    if (child && child->getNodeType() == AST::Declaration) {
       auto decl = std::static_pointer_cast<DeclarationNode>(child);
-      if (decl->getEntityType() == "platform" && decl->getName() == platformName) {
+      if (decl->getEntityType() == "platform" &&
+          decl->getName() == platformName) {
         platformDecl = decl;
         break;
       }
     }
   }
-
   if (!platformDecl) {
     return false;
   }
 
-  // Supported devices
-  auto suppProp = platformDecl->getPropertyValue("supportedDevices");
-  if (suppProp && suppProp->getNodeType() == AST::List) {
-    for (const auto &child : suppProp->getChildren()) {
-      m_supportedDevices.push_back(ASTQuery::getNodeName(child));
-    }
-  }
+  m_supportedDevices = ASTQuery::nameListProperty(platformDecl, "supportedDevices");
 
-  // Default device
   std::string activeDevice = targetDevice;
   if (activeDevice.empty()) {
-    auto defDevProp = platformDecl->getPropertyValue("defaultDevice");
-    if (defDevProp) {
-      activeDevice = ASTQuery::getNodeName(defDevProp);
-    }
+    activeDevice = ASTQuery::stringProperty(platformDecl, "defaultDevice");
   }
   m_targetDevice = activeDevice;
 
-  // Platform baseline policies
   parsePolicyBindings(platformDecl, "platformPolicies");
 
   if (activeDevice.empty()) {
     return true;
   }
 
-  // The device may be a board, a device or a core, and overlays whatever is
-  // below it. HardwareResolver applies the merge rules: resources accumulate
-  // and compilerFlags is overridden by the layer above.
   HardwareResolver resolver(strideroot);
   auto resolved = resolver.resolve(platformName, activeDevice);
   if (!resolved) {
-    return true; // unknown device: platform baseline only, as before
+    return true;
   }
   m_resources = resolved->nameListProperty("resources");
   m_compilerFlags = resolved->stringProperty("compilerFlags");
 
-  // Policies are bindings, not plain values: apply each layer's in order so
-  // the layer above overrides a binding for the same function.
   for (const auto &layer : resolved->chain()) {
     parsePolicyBindings(layer.declaration, "devicePolicies");
   }
-
   return true;
 }
 
 std::string PlatformPolicyManager::resolveVariant(
     const std::string &policyName, const std::string &functionName,
     std::string *outVariantTag) const {
-  std::string pShort = policyName;
-  size_t pColon = pShort.rfind("::");
-  if (pColon != std::string::npos) {
-    pShort = pShort.substr(pColon + 2);
-  }
+  const std::string pShort = stripNamespace(policyName);
+  const std::string fnShort = stripNamespace(functionName);
 
-  std::string fnShort = functionName;
-  size_t fnColon = fnShort.rfind("::");
-  if (fnColon != std::string::npos) {
-    fnShort = fnShort.substr(fnColon + 2);
-  }
-
-  std::vector<std::pair<std::string, std::string>> candidates = {
-      {pShort, fnShort},
-      {policyName, fnShort},
+  // Exact qualified match wins first; progressively relax to short names.
+  const std::pair<std::string, std::string> candidates[] = {
+      {policyName, functionName},
       {pShort, functionName},
-      {policyName, functionName}};
+      {policyName, fnShort},
+      {pShort, fnShort}};
 
-  for (const auto &cand : candidates) {
-    auto it = m_bindings.find(cand);
-    if (it != m_bindings.end()) {
-      std::string targetVariant = it->second;
-      if (outVariantTag) {
-        size_t atPos = targetVariant.find('@');
-        if (atPos != std::string::npos) {
-          *outVariantTag = targetVariant.substr(atPos + 1);
-        } else {
-          outVariantTag->clear();
-        }
-      }
-      return targetVariant;
+  auto tryLookup = [&](const std::pair<std::string, std::string> &key,
+                       std::string &outTarget) -> bool {
+    if (auto it = m_bindings.find(key); it != m_bindings.end()) {
+      outTarget = it->second;
+      return true;
     }
+    return false;
+  };
+
+  std::string targetVariant;
+  bool found = false;
+  for (const auto &cand : candidates) {
+    if (tryLookup(cand, targetVariant)) {
+      found = true;
+      break;
+    }
+  }
+  if (!found) {
+    // Also match qualified rules stored under a namespace when caller passes a
+    // short policy or function name.
+    for (const auto &[key, target] : m_bindings) {
+      if ((key.first == policyName || stripNamespace(key.first) == pShort) &&
+          (key.second == functionName ||
+           stripNamespace(key.second) == fnShort)) {
+        targetVariant = target;
+        found = true;
+        break;
+      }
+    }
+  }
+
+  if (found) {
+    if (outVariantTag) {
+      size_t atPos = targetVariant.find('@');
+      *outVariantTag = (atPos != std::string::npos)
+                           ? targetVariant.substr(atPos + 1)
+                           : std::string();
+    }
+    return targetVariant;
   }
 
   if (outVariantTag) {
     outVariantTag->clear();
   }
-  return "";
+  return {};
 }
 
-bool PlatformPolicyManager::hasBindingForFunction(
+bool PlatformPolicyManager::hasAnyPolicyBinding(
     const std::string &functionName) const {
-  std::string fnShort = functionName;
-  size_t fnColon = fnShort.rfind("::");
-  if (fnColon != std::string::npos) {
-    fnShort = fnShort.substr(fnColon + 2);
-  }
-  for (const auto &pair : m_bindings) {
-    if (pair.first.second == fnShort || pair.first.second == functionName) {
+  const std::string fnShort = stripNamespace(functionName);
+  for (const auto &[key, target] : m_bindings) {
+    (void)target;
+    if (key.second == functionName || stripNamespace(key.second) == fnShort) {
       return true;
     }
   }

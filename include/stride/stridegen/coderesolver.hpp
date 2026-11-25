@@ -1,5 +1,6 @@
 /*
-    Stride is licensed under the terms of the GNU Affero General Public License version 3.
+    Stride is licensed under the terms of the GNU Affero General Public License
+   version 3.
 
     Copyright (C) 2022-2026 Andres Cabrera
     All rights reserved.
@@ -25,27 +26,23 @@
 #ifndef CODERESOLVER_H
 #define CODERESOLVER_H
 
-#include "stride/parser/arraynode.h"
+#include <memory>
+#include <string>
+#include <vector>
+
 #include "stride/parser/ast.h"
-#include "stride/parser/declarationnode.h"
-#include "stride/parser/entitynode.h"
-#include "stride/parser/expressionnode.h"
-#include "stride/parser/memberaccessnode.h"
-#include "stride/parser/propertynode.h"
-#include "stride/parser/rangenode.h"
-#include "stride/parser/streamnode.h"
-#include "stride/parser/valuenode.h"
-
-#include <set>
-
-#include "stridesystem.hpp"
-
-#include "systemconfiguration.hpp"
-#include "platformpolicymanager.hpp"
-#include "featureresolver.hpp"
+#include "stride/parser/langerror.h"
+#include "stride/stridegen/platformpolicymanager.hpp"
+#include "stride/stridegen/stridesystem.hpp"
+#include "stride/stridegen/systemconfiguration.hpp"
+#include "stride/utils/featureresolver.h"
 
 namespace strd {
-// Resolves all code and creates a StrideSystem
+
+struct ResolverContext;
+
+// Resolves a parsed Stride AST against a target system through a sequence of
+// focused lowering and analysis passes.
 class CodeResolver {
 public:
   CodeResolver(ASTNode tree, std::string striderootDir,
@@ -53,221 +50,22 @@ public:
                FeatureConfig featureConfig = FeatureConfig());
   CodeResolver(ASTNode tree, std::string striderootDir,
                FeatureConfig featureConfig)
-      : CodeResolver(tree, striderootDir, SystemConfiguration(), featureConfig) {};
+      : CodeResolver(tree, striderootDir, SystemConfiguration(), featureConfig) {}
   ~CodeResolver();
 
   void process();
 
   // Errors found while resolving, such as a gpioPin the board can't support.
-  const std::vector<LangError> &getErrors() const { return m_errors; }
-  std::shared_ptr<StrideSystem> getSystem() { return m_system; }
-  const PlatformPolicyManager &getPolicyManager() const { return m_policyManager; }
-  PlatformPolicyManager &getPolicyManager() { return m_policyManager; }
-  const FeatureConfig &getFeatureConfig() const { return m_featureConfig; }
-  void setFeatureConfig(const FeatureConfig &config) { m_featureConfig = config; }
+  const std::vector<LangError> &getErrors() const;
+  std::shared_ptr<StrideSystem> getSystem() const;
+  const PlatformPolicyManager &getPolicyManager() const;
+  PlatformPolicyManager &getPolicyManager();
+  const FeatureConfig &getFeatureConfig() const;
 
 private:
-  // Main processing functions
-  void processSystem();
-  // Replaces domain properties that name an alias of a domain, such as
-  // PlatformLoopDomain, with the domain itself.
-  void resolveDomainAliases();
-  // Checks gpioPin declarations against the board, sets the pins up in
-  // RootDomain's onLoad and fills the DigitalIO modules' pin: in.
-  void processGpio();
-  // Declares the board's facts as constants the program can compute with
-  // while compiling: PlatformClockFrequency, the core clock in Hz.
-  void declarePlatformConstants();
-  void resolvePolicyVariants();
-  void resolvePolicyVariantsForNode(
-      ASTNode node, std::shared_ptr<DeclarationNode> activeDomain,
-      ScopeStack &scope,
-      const std::map<std::string, std::shared_ptr<DeclarationNode>> &domains);
-  void desugar();
-  void desugarSingleEntryStreams(ASTNode node, std::set<const void *> &visited);
-  void enableTesting();
-  void declareModuleInternalEntities();
-  void resolveStreamSymbols();
-  void resolveDeclarationSymbols();
-  void processDeclarations();
-  void expandIndexedStreams();
-  void expandValueRanges();
-  void expandParallel();
-  void resolveConstants();
-  void resolveMemberAccesses();
-  void processDomains();
-  void setPortEntityAttributes(const ScopeStack &scope, ASTNode tree);
-  void resolveAttributes(
-      const ScopeStack &scope,
-      ASTNode tree); // Resolve CodeGenetaror port attributes: rate, type
-  void analyzeConnections();
-  void resolveTypeCasting();
-  void resolveDeclarationDataTypes(); // Default type from type's typeClass
-  // Marks node to be converted from data type from to data type to
-  static void setTypecast(ASTNode node, const std::string &from,
-                          const std::string &to);
-  // Converts the operands of expression, and of the expressions inside it,
-  // to type, so that the arithmetic is done in type
-  static void widenOperands(ASTNode expression, const std::string &type,
-                            const ScopeStack &scopeStack, ASTNode tree);
-  void storeDeclarations();
-  void analyzeParents();
-  void analyzePersistence();
-  void analyzeStreamDependencies();
-  void analyzeContainerStreamDependencies(
-      const std::vector<std::shared_ptr<StreamNode>> &streams,
-      const ScopeStack &scope, ASTNode containerDecl = nullptr);
-
-  // Sub functions
-  static std::shared_ptr<DeclarationNode>
-  createSignalDeclaration(std::string name, int size, ScopeStack scope,
-                          ASTNode tree);
-  void resolveStreamRatesReverse(std::shared_ptr<StreamNode> stream,
-                                 const ScopeStack &scope, ASTNode tree);
-  void resolveStreamRates(std::shared_ptr<StreamNode> stream,
-                          const ScopeStack &scope, ASTNode tree,
-                          bool fallbackToDomainDefault = true);
-  void resolveStreamTypesReverse(std::shared_ptr<StreamNode> stream,
-                                 ScopeStack stack, ASTNode tree);
-  void markUnresolvedOutputType(ASTNode source, ASTNode target,
-                                ScopeStack scope, ASTNode tree);
-  void resolveStreamTypesForward(std::shared_ptr<StreamNode> stream,
-                                 ScopeStack scope, ASTNode tree);
-
-  void expandParallelStream(std::shared_ptr<StreamNode> stream,
-                            ScopeStack scopeStack, ASTNode tree);
-
-  void expandStreamToSizes(std::shared_ptr<StreamNode> stream,
-                           std::vector<int> &size, int previousOutSize,
-                           ScopeStack scopeStack);
-  ASTNode expandFunctionFromProperties(std::shared_ptr<FunctionNode> func,
-                                       ScopeStack scope, ASTNode tree);
-
-  void markNodePersistence(ASTNode streamsList, ASTNode blocksList,
-                           ScopeStack &scope, ASTNode tree);
-  void analyzeChildConnections(ASTNode node,
-                               ScopeStack scopeStack = ScopeStack());
-
-  void resolveDomainsForStream(std::shared_ptr<StreamNode> stream,
-                               ScopeStack scopeStack,
-                               ASTNode contextDomainNode);
-
-  void setDomainForNode(ASTNode node, ASTNode domain, ScopeStack scopeStack,
-                        ASTNode tree, bool force = false);
-  ASTNode processDomainsForNode(ASTNode node, ScopeStack scopeStack,
-                                std::vector<ASTNode> &domainStack);
-  void setDomainForStack(std::vector<ASTNode> domainStack,
-                         ASTNode resolvingInstance, ASTNode domainName,
-                         ScopeStack scopeStack);
-
-  std::vector<ASTNode> declareUnknownName(std::shared_ptr<EntityNode> entityNode,
-                                          int size, ScopeStack localScope,
-                                          ASTNode tree);
-  std::vector<ASTNode> declareUnknownArray(std::shared_ptr<ArrayNode> name,
-                                           int size, ScopeStack localScope,
-                                           ASTNode tree);
-  std::shared_ptr<DeclarationNode> createConstantDeclaration(std::string name,
-                                                             ASTNode value);
-  void declareIfMissing(std::string name, ASTNode declList, ASTNode value);
-
-  std::vector<ASTNode>
-  declareUnknownExpressionSymbols(std::shared_ptr<ExpressionNode> expr,
-                                  int size, ScopeStack scopeStack,
-                                  ASTNode tree);
-  std::vector<ASTNode>
-  declareUnknownFunctionSymbols(std::shared_ptr<FunctionNode> func,
-                                ScopeStack scopeStack, ASTNode tree);
-  std::shared_ptr<ListNode> expandNameToList(EntityNode *name, int size);
-  void expandNamesToArrays(std::shared_ptr<StreamNode> stream, ASTNode tree);
-  std::vector<ASTNode>
-  declareUnknownStreamSymbols(std::shared_ptr<StreamNode> stream,
-                              ASTNode previousStreamMember,
-                              ScopeStack localScope, ASTNode tree);
-  std::vector<ASTNode>
-  getModuleStreams(std::shared_ptr<DeclarationNode> module);
-
-  void declareInternalEntitiesForNode(ASTNode node, ScopeStack scope);
-
-  void propagateDomainsForNode(ASTNode node, ScopeStack scopeStack);
-  void resolveDomainForStreamNode(ASTNode node, ScopeStack scope);
-
-  ASTNode resolveMemberAccess(std::shared_ptr<MemberAccessNode> memberAccess,
-                              ScopeStack scopeStack);
-
-  void
-  setPortEntityAttributesForDeclaration(std::shared_ptr<DeclarationNode> decl,
-                                        ScopeStack stack, ASTNode tree);
-
-  void setNodeRate(ASTNode node, double rate, ScopeStack scope, ASTNode tree);
-  void setNodeType(ASTNode node, ASTNode type, ScopeStack scope, ASTNode tree);
-
-  void setInputEntityForFunction(std::shared_ptr<FunctionNode> func,
-                                 ScopeStack scopeStack, ASTNode previous);
-  void setOutputEntityForFunction(std::shared_ptr<FunctionNode> func,
-                                  ScopeStack scopeStack, ASTNode previous);
-  void checkStreamConnections(std::shared_ptr<StreamNode> stream,
-                              ScopeStack scopeStack,
-                              ASTNode previous = nullptr);
-
-  void markPreviousReads(ASTNode node, ASTNode previous, ScopeStack scopeStack);
-  void markConnectionForNode(ASTNode node, ScopeStack scopeStack,
-                             ASTNode previous = nullptr,
-                             unsigned int listIndex = 0);
-
-  void storeDeclarationsForNode(ASTNode node, ScopeStack scopeStack,
-                                ASTNode tree);
-
-  void resolveTypeCastForNode(ASTNode node, ScopeStack scopeStack,
-                              ASTNode tree);
-  void resolveTypeCastForStream(std::shared_ptr<StreamNode> stream,
-                                ScopeStack scopeStack, ASTNode tree);
-  void resolveDataTypeForDeclaration(std::shared_ptr<DeclarationNode> decl,
-                                     std::set<const void *> &visited);
-  std::shared_ptr<DeclarationNode>
-  getDataTypeClass(std::shared_ptr<DeclarationNode> decl);
-  std::shared_ptr<DeclarationNode> findTypeClass(std::string name,
-                                                 std::string framework);
-  // Replaces the library's dummy data types in the tree (alias Real {
-  // entity: Float64 }, ...) with the system framework's own declarations of
-  // the same name, so e.g. Real is Float32 for the AVR framework.
-  void overlayFrameworkDataTypes();
-  void setDeclarationType(std::shared_ptr<DeclarationNode> decl, ASTNode type);
-  void setPortAttributesForEntity(std::shared_ptr<DeclarationNode> blockDecl,
-                                 std::string portName);
-  void changeDeclarationType(std::shared_ptr<DeclarationNode> decl,
-                             std::string entityType);
-  void resolveTypeCastForDeclaration(std::shared_ptr<DeclarationNode> decl,
-                                     ScopeStack scopeStack, ASTNode tree);
-  void resolveNodeSymbols(ASTNode decl, ScopeStack scopeStack, ASTNode tree);
-
-  void appendParent(std::shared_ptr<DeclarationNode> decl,
-                    std::shared_ptr<DeclarationNode> parent);
-
-  std::shared_ptr<StreamNode> makeStreamFromStack(std::vector<ASTNode> &stack);
-  std::vector<ASTNode> sliceStreamByDomain(std::shared_ptr<StreamNode> stream,
-                                           ScopeStack scopeStack);
-  void sliceDomainsInNode(std::shared_ptr<DeclarationNode> stream,
-                          ScopeStack scopeStack);
-
-  ASTNode getModuleContextDomain(std::shared_ptr<DeclarationNode> moduleDecl);
-  ASTNode getDomainOfUsedGlobals(const std::vector<ASTNode> &streams);
-  ASTNode applyDomainOfUsedGlobals(std::shared_ptr<DeclarationNode> module,
-                                   const std::vector<ASTNode> &streams);
-
-  std::vector<ASTNode> mContextDomainStack;
-
-  std::shared_ptr<StrideSystem> m_system;
-  SystemConfiguration m_systemConfig;
-
-  ASTNode m_tree;
-  std::string m_striderootDir;
-  PlatformPolicyManager m_policyManager;
-
-  // Resolver configuration
-  bool m_declareUnknownSymbols = false;
-  FeatureConfig m_featureConfig;
-  std::vector<LangError> m_errors;
+  std::unique_ptr<ResolverContext> m_ctx;
 };
+
 } // namespace strd
 
 #endif // CODERESOLVER_H

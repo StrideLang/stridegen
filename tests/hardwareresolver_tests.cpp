@@ -80,7 +80,7 @@ TEST(HardwareResolver, UnoResolvesBoardDeviceCore) {
   // From the core.
   EXPECT_EQ(uno->stringProperty("triple"), "avr");
   EXPECT_EQ(uno->intProperty("pointerBits"), 16);
-  EXPECT_EQ(uno->blockString("types", "real"), "Float32");
+  EXPECT_EQ(uno->recordString("types", "real"), "Float32");
   // From the device.
   EXPECT_EQ(uno->stringProperty("cpu"), "atmega328p");
   EXPECT_EQ(uno->intProperty("clock"), 16000000);
@@ -92,17 +92,17 @@ TEST(HardwareResolver, UnoResolvesBoardDeviceCore) {
   EXPECT_EQ(uno->entryInt("pins", "LED", "bit"), 5);
   EXPECT_EQ(uno->entryInt("pins", "A3", "adc"), 3);
   EXPECT_EQ(uno->entry("pins", "D20"), nullptr);
-  EXPECT_EQ(uno->blockString("upload", "method"), "avrdude");
-  EXPECT_EQ(uno->blockInt("upload", "baud"), 115200);
-  EXPECT_EQ(uno->blockString("toolchain", "cc"), "AvrGcc");
+  EXPECT_EQ(uno->recordString("upload", "method"), "avrdude");
+  EXPECT_EQ(uno->recordInt("upload", "baud"), 115200);
+  EXPECT_EQ(uno->recordString("toolchain", "cc"), "AvrGcc");
   EXPECT_TRUE(contains(uno->nameListProperty("usb"), "2341:0043"));
   EXPECT_EQ(uno->nameListProperty("image"), std::vector<std::string>{"Hex"});
 
   // `memory` merges key by key: flash and ram from the device, bootloader
   // from the board.
-  EXPECT_EQ(uno->blockInt("memory", "flash"), 32768);
-  EXPECT_EQ(uno->blockInt("memory", "ram"), 2048);
-  EXPECT_EQ(uno->blockInt("memory", "bootloader"), 512);
+  EXPECT_EQ(uno->recordInt("memory", "flash"), 32768);
+  EXPECT_EQ(uno->recordInt("memory", "ram"), 2048);
+  EXPECT_EQ(uno->recordInt("memory", "bootloader"), 512);
 
   // `meta` is a plain value: the board's wins.
   EXPECT_NE(uno->stringProperty("meta").find("Arduino Uno"), std::string::npos);
@@ -116,7 +116,7 @@ TEST(HardwareResolver, DeviceAloneStopsAtCore) {
   ASSERT_TRUE(device.has_value());
   EXPECT_EQ(device->chain().size(), 2u);
   EXPECT_EQ(device->layerName(HardwareKind::Board), "");
-  EXPECT_FALSE(device->blockInt("memory", "bootloader").has_value());
+  EXPECT_FALSE(device->recordInt("memory", "bootloader").has_value());
 }
 
 TEST(HardwareResolver, PicoOverlayChainUnchanged) {

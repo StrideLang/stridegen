@@ -17,26 +17,37 @@
     You should have received a copy of the GNU Affero General Public License
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-    Based on BSD/MIT code by Andres Cabrera and Joseph Tilbian.
-
     Author: Andres Cabrera
 */
 
-#ifndef FRAMEWORKTOOL_HPP
-#define FRAMEWORKTOOL_HPP
+#ifndef STRIDE_PLUGINS_PLUGINLOADER_HPP
+#define STRIDE_PLUGINS_PLUGINLOADER_HPP
 
+#include <memory>
 #include <string>
-#include "declarationnode.h"
+#include <vector>
 
-// Perhaps use a different word to tool, as we are already using it 
-class FrameworkTool
-{
-public:
-    FrameworkTool(std::string strideRoot,
-                  std::string platformPath);
-    
-private:
-    std::vector<DeclarationNode> tools;
+#include "stride/parser/ast.h"
+#include "stride/stridegen/plugins/builder.hpp"
+
+namespace strd {
+class StrideSystem;
+
+// Owns a Builder instantiated from a dynamically loaded platform plugin, keeping
+// the underlying shared library loaded until the Builder is destroyed.
+struct LoadedPluginBuilder {
+  std::shared_ptr<void> libraryHandle;
+  std::unique_ptr<Builder> builder;
 };
 
-#endif // FRAMEWORKTOOL_HPP
+class PluginLoader {
+public:
+  static std::string ensureProductsDirectory(const std::string &fileName);
+
+  static std::vector<LoadedPluginBuilder>
+  loadBuilders(StrideSystem &system, const std::string &fileName,
+               const ASTNode &tree);
+};
+} // namespace strd
+
+#endif // STRIDE_PLUGINS_PLUGINLOADER_HPP

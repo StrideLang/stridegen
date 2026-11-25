@@ -3,7 +3,6 @@ project(StrideGen_tests)
 
 option(STRIDEPARSER_BUILD_TESTS "Build and run unit test for the Stride parser" OFF)
 
-# Get and build googletest
 if (NOT gtest)
     message("Building googletest with StrideGen build")
     include(FetchContent)
@@ -16,7 +15,6 @@ if (NOT gtest)
     FetchContent_MakeAvailable(googletest)
 endif()
 
-
 set(TEST_SOURCES
   main.cpp
   resolver.cpp
@@ -24,10 +22,8 @@ set(TEST_SOURCES
   codeanalysis_tests.cpp
   codevalidator_tests.cpp
   stridesystem_tests.cpp
-  featureresolver_tests.cpp
   hardwareresolver_tests.cpp
 )
-
 
 add_executable(stridegen_tests ${TEST_SOURCES})
 
@@ -38,7 +34,8 @@ set_target_properties(stridegen_tests PROPERTIES
 
 add_test(NAME stridegen_tests COMMAND stridegen_tests)
 
-target_link_libraries(stridegen_tests PUBLIC StrideParser StrideUtils StrideGen gtest)
+target_link_libraries(stridegen_tests PUBLIC
+  StrideParser StrideUtils StrideGen StrideCppGen StridePlugins gtest)
 target_compile_definitions(stridegen_tests PUBLIC
   "-DTESTS_SOURCE_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/data/\"")
 

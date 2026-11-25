@@ -1,5 +1,6 @@
 /*
-    Stride is licensed under the terms of the GNU Affero General Public License version 3.
+    Stride is licensed under the terms of the GNU Affero General Public License
+   version 3.
 
     Copyright (C) 2022-2026 Andres Cabrera
     All rights reserved.
@@ -25,191 +26,115 @@
 #ifndef CODEANALYSIS_HPP
 #define CODEANALYSIS_HPP
 
-#include <map>
+#include <string>
 #include <unordered_set>
-#include "codeentities.hpp"
-#include "stridesystem.hpp"
+#include <utility>
+#include <vector>
+
+#include "stride/utils/astquery.h"
 
 namespace strd {
+
 class CodeAnalysis {
 public:
-  enum {
-    SIZE_UNKNOWN = -1,
-    SIZE_MEMBER_ACCESS = -2
-  };
-  // Global tree analysis
-  static std::vector<std::string> getUsedDomains(ASTNode tree);
-  static std::vector<std::string> getUsedFrameworks(ASTNode tree);
+  enum { SIZE_UNKNOWN = -1, SIZE_MEMBER_ACCESS = -2 };
 
-  // Get instance. For entities the declaration is the instance, for modules it
-  // is the function node in the stream Many properties need to be stored in the
-  // instance.
-  static ASTNode getInstance(ASTNode block, ScopeStack scopeStack,
-                             ASTNode tree);
-
-  // Retrieve stored declaration in "declaration" compiler property
-  static std::shared_ptr<DeclarationNode> getDeclaration(ASTNode node);
+  // Global tree domain & framework analysis
+  static std::vector<std::string> getUsedDomains(const ASTNode &tree);
+  static std::vector<std::string> getUsedFrameworks(const ASTNode &tree);
 
   // Domain queries
-  static std::shared_ptr<DeclarationNode>
-  findDomainDeclaration(std::string domainName, std::string framework,
-                        ASTNode tree);
-
-  static std::shared_ptr<DeclarationNode>
-  findDomainDeclaration(std::string domainId, ASTNode tree);
-
-  static ASTNode getNodeDomain(ASTNode node, ScopeStack scopeStack,
-                               ASTNode tree);
-
-  static std::string getNodeDomainName(ASTNode node, ScopeStack scopeStack,
-                                       ASTNode tree);
-
-  static std::string getParentDomain(const std::string &domainId, ASTNode tree);
-  static std::string getCommonAncestorDomain(const std::string &domainId1,
-                                            const std::string &domainId2,
-                                            ASTNode tree);
-  static std::string getDomainIdentifier(ASTNode domain, ScopeStack scopeStack,
-                                         ASTNode tree);
-
-  static ASTNode resolveDomain(ASTNode node, ScopeStack scopeStack,
-                               ASTNode tree, bool downStream = true);
+  static ASTNode getNodeDomain(const ASTNode &node, const ScopeStack &scopeStack,
+                               const ASTNode &tree);
+  static std::string getNodeDomainName(const ASTNode &node,
+                                       const ScopeStack &scopeStack,
+                                       const ASTNode &tree);
+  static ASTNode resolveDomain(const ASTNode &node, const ScopeStack &scopeStack,
+                               const ASTNode &tree, bool downStream = true);
 
   // Rate queries
-  static double getNodeRate(ASTNode node, ScopeStack scope = ScopeStack(),
-                            ASTNode tree = nullptr);
-
-  static double getModulePortRate(std::shared_ptr<FunctionNode> funcNode,
+  static double getNodeRate(const ASTNode &node, ScopeStack scope = ScopeStack(),
+                            const ASTNode &tree = nullptr);
+  static double getModulePortRate(const std::shared_ptr<FunctionNode> &funcNode,
                                   const std::string &portType,
-                                  const ScopeStack &scope, ASTNode tree);
-
-  static ASTNode getModulePortRateExpr(std::shared_ptr<FunctionNode> funcNode,
-                                       const std::string &portType,
-                                       const ScopeStack &scope, ASTNode tree);
-
-  static double resolveRate(ASTNode node, ScopeStack scopeStack, ASTNode tree,
-                            bool downStream = true);
-
-  static double resolveRateToFloat(ASTNode rateNode, ScopeStack scope,
-                                   ASTNode tree,
-                                   std::vector<LangError> *errors);
-  static double
-  getDomainDefaultRate(std::shared_ptr<DeclarationNode> domainDecl);
-
-  // Framework queries
-  static std::string getFrameworkForDomain(std::string domainName,
-                                           ASTNode tree);
-  // Stream analysis
-
-  /// Number of parallel streams that a single stream can be broken up into
-  static int numParallelStreams(StreamNode *stream, StrideSystem &platform,
-                                const ScopeStack &scope, ASTNode tree,
-                                std::vector<LangError> *errors = nullptr);
-
-  static std::shared_ptr<DeclarationNode>
-  resolveConnectionEntity(ASTNode node, ScopeStack scopeStack, ASTNode tree,
-                          bool downStream = true);
-
-  //
+                                  const ScopeStack &scope, const ASTNode &tree);
   static ASTNode
-  getMatchedOuterInstance(std::shared_ptr<FunctionNode> functionNode,
-                          std::shared_ptr<DeclarationNode> blockDecl,
-                          std::shared_ptr<DeclarationNode> funcDecl,
-                          ScopeStack scopeStack, ASTNode tree);
+  getModulePortRateExpr(const std::shared_ptr<FunctionNode> &funcNode,
+                        const std::string &portType, const ScopeStack &scope,
+                        const ASTNode &tree);
+  static double resolveRate(const ASTNode &node, const ScopeStack &scopeStack,
+                            const ASTNode &tree, bool downStream = true);
+  static double resolveRateToFloat(const ASTNode &rateNode,
+                                   const ScopeStack &scope, const ASTNode &tree,
+                                   std::vector<LangError> *errors);
 
-  static std::vector<ASTNode>
-  getEntitiesInScope(ASTNode root, ScopeStack scopeStack, ASTNode tree);
+  // Stream connection & member access evaluation
+  static std::shared_ptr<DeclarationNode>
+  resolveConnectionEntity(const ASTNode &node, const ScopeStack &scopeStack,
+                          const ASTNode &tree, bool downStream = true);
+  static ASTNode
+  getMatchedOuterInstance(const std::shared_ptr<FunctionNode> &functionNode,
+                          const std::shared_ptr<DeclarationNode> &entityDecl,
+                          const std::shared_ptr<DeclarationNode> &funcDecl,
+                          const ScopeStack &scopeStack, const ASTNode &tree);
 
-  // Evaluate value of member access / port property (size and rate)
-  static int evaluateSizeMemberAccess(std::string targetPortName,
-                                      ScopeStack scopeStack,
-                                      std::shared_ptr<DeclarationNode> decl,
-                                      std::shared_ptr<FunctionNode> func,
-                                      ASTNode tree);
-
-  static double evaluateRateMemberAccess(std::string targetPortName,
-                                         ScopeStack scopeStack,
-                                         std::shared_ptr<DeclarationNode> decl,
-                                         std::shared_ptr<FunctionNode> func,
-                                         ASTNode tree);
-
-  static std::vector<std::shared_ptr<MemberAccessNode>>
-  getUsedMemberAccesses(std::shared_ptr<DeclarationNode> funcDecl);
-
-  static std::vector<std::shared_ptr<MemberAccessNode>>
-  getUsedMemberAccessesInNode(ASTNode node);
-
-  static std::vector<ASTNode> getUsedEntitiesInNode(ASTNode node);
-
-  // //
-
-  // Input and output size
-  static int getNodeNumOutputs(ASTNode node, const ScopeStack &scope,
-                               ASTNode tree,
-                               std::vector<LangError> *errors = nullptr);
-  static int getNodeNumInputs(ASTNode node, ScopeStack scope, ASTNode tree,
-                              std::vector<LangError> *errors = nullptr);
-
-  // A value of -1 means undefined. -2 means set from member access / port
-  // property.
   static int
-  getTypeNumOutputs(std::shared_ptr<DeclarationNode> blockDeclaration,
-                    const ScopeStack &scope, ASTNode tree,
-                    std::vector<LangError> *errors = nullptr);
+  evaluateSizeMemberAccess(const std::string &targetPortName,
+                           ScopeStack scopeStack,
+                           const std::shared_ptr<DeclarationNode> &decl,
+                           const std::shared_ptr<FunctionNode> &func,
+                           const ASTNode &tree);
+  static double
+  evaluateRateMemberAccess(const std::string &targetPortName,
+                           ScopeStack scopeStack,
+                           const std::shared_ptr<DeclarationNode> &decl,
+                           const std::shared_ptr<FunctionNode> &func,
+                           const ASTNode &tree);
 
-  static int getTypeNumInputs(std::shared_ptr<DeclarationNode> blockDeclaration,
-                              const ScopeStack &scope, ASTNode tree,
+  // Input and output bundle widths (-1 = unknown, -2 = member access)
+  static int getNodeNumOutputs(const ASTNode &node, const ScopeStack &scope,
+                               const ASTNode &tree,
+                               std::vector<LangError> *errors = nullptr);
+  static int getNodeNumInputs(const ASTNode &node, ScopeStack scope,
+                              const ASTNode &tree,
                               std::vector<LangError> *errors = nullptr);
-
-  static int getFunctionDataSize(std::shared_ptr<FunctionNode> func,
-                                 ScopeStack scope, ASTNode tree,
+  static int
+  getTypeNumOutputs(const std::shared_ptr<DeclarationNode> &entityDeclaration,
+                    const ScopeStack &scope, const ASTNode &tree,
+                    std::vector<LangError> *errors = nullptr);
+  static int
+  getTypeNumInputs(const std::shared_ptr<DeclarationNode> &entityDeclaration,
+                   const ScopeStack &scope, const ASTNode &tree,
+                   std::vector<LangError> *errors = nullptr);
+  static int getFunctionDataSize(const std::shared_ptr<FunctionNode> &func,
+                                 const ScopeStack &scope, const ASTNode &tree,
                                  std::vector<LangError> *errors = nullptr);
-
-  static int getFunctionNumInstances(std::shared_ptr<FunctionNode> func,
-                                     ScopeStack scope, ASTNode tree,
+  static int getFunctionNumInstances(const std::shared_ptr<FunctionNode> &func,
+                                     ScopeStack scope, const ASTNode &tree,
                                      std::vector<LangError> *errors = nullptr);
 
-  static std::shared_ptr<DeclarationNode>
-  findDataTypeDeclaration(std::string dataTypeName, ASTNode tree);
-
-  static std::vector<ASTNode>
-  getInputDataTypes(ASTNode node, const ScopeStack &scope, ASTNode tree);
-  static std::vector<ASTNode>
-  getOutputDataTypes(ASTNode node, const ScopeStack &scope, ASTNode tree);
-  // True if the type of the module's output block is taken from its own
-  // output port (e.g. type: OutputPort.type). Its output type can then only
-  // be resolved from a declared block connected to the output.
-  static bool
-  isOutputTypeFromOutputPort(std::shared_ptr<DeclarationNode> funcDecl);
-  static ASTNode
-  getDataTypeForSignalDeclaration(std::shared_ptr<DeclarationNode> decl);
+  // Data type resolution
+  static std::vector<ASTNode> getInputDataTypes(const ASTNode &node,
+                                                const ScopeStack &scope,
+                                                const ASTNode &tree);
+  static std::vector<ASTNode> getOutputDataTypes(const ASTNode &node,
+                                                 const ScopeStack &scope,
+                                                 const ASTNode &tree);
   static std::string
-  getDataTypeForDeclaration(std::shared_ptr<DeclarationNode> decl,
-                            const ScopeStack &scope, ASTNode tree);
+  getDataTypeForDeclaration(const std::shared_ptr<DeclarationNode> &decl,
+                            const ScopeStack &scope, const ASTNode &tree);
+  static std::string resolveEntityDataType(const ASTNode &node,
+                                           const ScopeStack &scopeStack,
+                                           const ASTNode &tree);
+  static std::string resolveNodeOutDataType(const ASTNode &node,
+                                            const ScopeStack &scopeStack,
+                                            const ASTNode &tree);
 
-  static std::string resolveEntityDataType(ASTNode name, ScopeStack scopeStack,
-                                           ASTNode tree);
-  static std::string resolveNodeOutDataType(ASTNode node, const ScopeStack &scopeStack,
-                                            ASTNode tree);
-  static std::string resolveNodeOutDataTypeInternal(ASTNode node,
-                                                    const ScopeStack &scopeStack,
-                                                    ASTNode tree);
-  static std::string resolveListDataType(ListNode *listnode,
-                                         ScopeStack scopeStack, ASTNode tree);
-  static std::string resolveExpressionDataType(ExpressionNode *exprnode,
-                                               ScopeStack scopeStack,
-                                               ASTNode tree);
-  static std::string resolveRangeDataType(RangeNode *rangenode,
-                                          const ScopeStack &scopeStack, ASTNode tree);
-  static std::string resolveMemberAccessDataType(MemberAccessNode *memberAccess,
-                                                 ScopeStack scopeStack,
-                                                 ASTNode tree);
-
-  static std::vector<ASTNode> getDomainIOEntityDeclarations(ASTNode tree);
-
-  static std::shared_ptr<DeclarationNode>
-  matchDefinitionToTypes(std::vector<std::shared_ptr<DeclarationNode>> decls,
-                         std::shared_ptr<FunctionNode> func,
-                         const ScopeStack &scope = {}, ASTNode tree = nullptr);
+  // Overload resolution
+  static std::shared_ptr<DeclarationNode> matchDefinitionToTypes(
+      const std::vector<std::shared_ptr<DeclarationNode>> &decls,
+      const std::shared_ptr<FunctionNode> &func,
+      const ScopeStack &scope = {}, const ASTNode &tree = nullptr);
 
   enum class NodeRole {
     Input,
@@ -221,16 +146,10 @@ public:
   };
 
   static NodeRole
-  determineNodeRole(ASTNode entity, std::shared_ptr<DeclarationNode> funcDecl,
-                    const ScopeStack &scope, ASTNode tree,
+  determineNodeRole(const ASTNode &entity,
+                    const std::shared_ptr<DeclarationNode> &funcDecl,
+                    const ScopeStack &scope, const ASTNode &tree,
                     std::shared_ptr<DeclarationNode> &outEntityDecl);
-
-  static std::vector<ASTNode>
-  getUsedEntitiesInStreams(std::shared_ptr<DeclarationNode> funcDecl);
-
-  static bool isStorageEntity(std::shared_ptr<DeclarationNode> decl);
-  static std::string getStorageElementDataType(std::shared_ptr<DeclarationNode> decl);
-  static SignalAccess getSignalAccess(ASTNode instanceNode, ASTNode tree, StrideSystem *system, const std::map<std::string, std::string> &domainMap = {});
 
   using DataInfo = std::pair<ASTNode, std::string>; // Instance, Type
   struct TypeTree {
@@ -240,37 +159,50 @@ public:
     std::vector<DataInfo> input;
     std::vector<DataInfo> output;
     std::vector<DataInfo> external;
-    std::vector<DataInfo> persistent; // store state that persistes across calls
+    std::vector<DataInfo> persistent; // persists across calls
     std::vector<DataInfo> internal;
     mutable std::unordered_set<std::string> namesSet;
 
-    bool contains(std::string name);
-    CodeAnalysis::TypeTree *find(ASTNode node,
-                                 CodeAnalysis::TypeTree *tree = nullptr);
-    TypeTree *getDomainRootTree(std::string domainName);
-    TypeTree *getParentTreeForNode(ASTNode node,
-                                   CodeAnalysis::TypeTree *tree = nullptr);
+    bool contains(const std::string &name) const;
+    TypeTree *find(const ASTNode &node, TypeTree *tree = nullptr);
+    const TypeTree *find(const ASTNode &node,
+                         const TypeTree *tree = nullptr) const;
+    TypeTree *getDomainRootTree(const std::string &domainName);
+    TypeTree *getParentTreeForNode(const ASTNode &node,
+                                   TypeTree *tree = nullptr);
   };
 
   static TypeTree getStateStructInformation(const ScopeStack &scope,
-                                            ASTNode tree);
-
-  static TypeTree
-  getStateStructInformationForDeclaration(std::shared_ptr<DeclarationNode> decl,
-                                          const ScopeStack &scope,
-                                          ASTNode tree);
+                                            const ASTNode &tree);
+  static TypeTree getStateStructInformationForDeclaration(
+      const std::shared_ptr<DeclarationNode> &decl, const ScopeStack &scope,
+      const ASTNode &tree);
 
 private:
-  static TypeTree
-  getTypeTreeForFunctionInstance(std::shared_ptr<FunctionNode> func,
-                                 const ScopeStack &scope, ASTNode tree,
-                                 int &instanceCounter);
-  static void processStreamNode(ASTNode streamNode, const ScopeStack &scope,
-                                ASTNode tree, TypeTree &typeTree);
+  static std::string resolveNodeOutDataTypeInternal(const ASTNode &node,
+                                                    const ScopeStack &scopeStack,
+                                                    const ASTNode &tree);
+  static std::string resolveListDataType(ListNode *listNode,
+                                         const ScopeStack &scopeStack,
+                                         const ASTNode &tree);
+  static std::string resolveExpressionDataType(ExpressionNode *exprNode,
+                                               const ScopeStack &scopeStack,
+                                               const ASTNode &tree);
+  static std::string resolveRangeDataType(RangeNode *rangeNode,
+                                          const ScopeStack &scopeStack,
+                                          const ASTNode &tree);
+  static std::string resolveMemberAccessDataType(MemberAccessNode *memberAccess,
+                                                 const ScopeStack &scopeStack,
+                                                 const ASTNode &tree);
+
+  static void processStreamNode(const ASTNode &streamNode,
+                                const ScopeStack &scope, const ASTNode &tree,
+                                TypeTree &typeTree);
   static void processStreamNodeForDeclaration(
-      ASTNode node, std::shared_ptr<DeclarationNode> funcDecl,
-      const ScopeStack &funcScope, ASTNode tree, TypeTree &typeTree);
+      const ASTNode &node, const std::shared_ptr<DeclarationNode> &funcDecl,
+      const ScopeStack &funcScope, const ASTNode &tree, TypeTree &typeTree);
 };
+
 } // namespace strd
 
 #endif // CODEANALYSIS_HPP

@@ -17,22 +17,29 @@
     You should have received a copy of the GNU Affero General Public License
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-    Based on BSD/MIT code by Andres Cabrera and Joseph Tilbian.
-
     Author: Andres Cabrera
 */
 
-#include "gtest/gtest.h"
+#ifndef STRIDE_CPPCODEGEN_SIGNALACCESS_HPP
+#define STRIDE_CPPCODEGEN_SIGNALACCESS_HPP
 
-#include "stride/stridegen/codeanalysis.hpp"
-#include "stride/stridegen/coderesolver.hpp"
-#include "stride/utils/astfunctions.h"
-#include "stride/utils/astquery.h"
-// #include "stride/stridegen/stridelibrary.hpp"
+#include <map>
+#include <string>
 
-#include <fstream>
+#include "stride/parser/ast.h"
+#include "stride/stridegen/cppcodegen/codeentities.hpp"
 
-using namespace strd;
+namespace strd {
+class StrideSystem;
 
+// Cross-domain signal synchronization analysis for C++ code generation.
+class SignalAccessAnalyzer {
+public:
+  static SignalAccess
+  getSignalAccess(const ASTNode &instanceNode, const ASTNode &tree,
+                  StrideSystem *system,
+                  const std::map<std::string, std::string> &domainMap = {});
+};
+} // namespace strd
 
-
+#endif // STRIDE_CPPCODEGEN_SIGNALACCESS_HPP

@@ -100,7 +100,8 @@ TEST(StrideSystem, FrameworkDataTypeNames) {
 }
 
 
-#include "stride/stridegen/codevalidator.hpp"
+#include "stride/stridegen/cppcodegen/domainconnectionbuilder.hpp"
+#include "stride/utils/astvalidation.h"
 #include "stride/parser/arraynode.h"
 #include "stride/parser/streamnode.h"
 #include "stride/parser/valuenode.h"
@@ -112,7 +113,7 @@ TEST(StrideSystem, ParameterizedConnectionDefaults) {
     ASTNode tree = AST::parseFile(TESTS_SOURCE_DIR "validator/conn_param_default.stride");
     ASSERT_TRUE(tree != nullptr);
 
-    system.generateDomainConnections(tree);
+    DomainConnectionBuilder::generateDomainConnections(system, tree);
 
     std::vector<std::shared_ptr<StreamNode>> streams;
     for (const auto &node : tree->getChildren()) {
@@ -134,7 +135,7 @@ TEST(StrideSystem, ParameterizedConnectionOverrideInSystem) {
     ASTNode tree = AST::parseFile(TESTS_SOURCE_DIR "validator/conn_param_override.stride");
     ASSERT_TRUE(tree != nullptr);
 
-    system.generateDomainConnections(tree);
+    DomainConnectionBuilder::generateDomainConnections(system, tree);
 
     std::vector<std::shared_ptr<StreamNode>> streams;
     for (const auto &node : tree->getChildren()) {
@@ -156,7 +157,7 @@ TEST(StrideSystem, ParameterizedConnectionCallSyntax) {
     ASTNode tree = AST::parseFile(TESTS_SOURCE_DIR "validator/conn_param_call_syntax.stride");
     ASSERT_TRUE(tree != nullptr);
 
-    system.generateDomainConnections(tree);
+    DomainConnectionBuilder::generateDomainConnections(system, tree);
 
     std::vector<std::shared_ptr<StreamNode>> streams;
     for (const auto &node : tree->getChildren()) {
@@ -175,7 +176,7 @@ TEST(CodeValidator, ConnectionInvalidPropertyRejected) {
     ASTNode tree = AST::parseFile(TESTS_SOURCE_DIR "validator/conn_invalid_prop.stride");
     ASSERT_TRUE(tree != nullptr);
 
-    auto errors = CodeValidator::findInvalidConnectionProperties(tree);
+    auto errors = ASTValidation::findInvalidConnectionProperties(tree);
     ASSERT_EQ(errors.size(), 1);
     EXPECT_EQ(errors[0].type, LangError::InvalidPort);
     ASSERT_GE(errors[0].errorTokens.size(), 2);
@@ -187,7 +188,7 @@ TEST(CodeValidator, ConnectionNegativePortRejected) {
     ASTNode tree = AST::parseFile(TESTS_SOURCE_DIR "validator/conn_negative_port.stride");
     ASSERT_TRUE(tree != nullptr);
 
-    auto errors = CodeValidator::findInvalidConnectionProperties(tree);
+    auto errors = ASTValidation::findInvalidConnectionProperties(tree);
     ASSERT_EQ(errors.size(), 1);
     EXPECT_EQ(errors[0].type, LangError::ArrayIndexOutOfBounds);
     ASSERT_GE(errors[0].errorTokens.size(), 2);
@@ -202,10 +203,10 @@ TEST(StrideSystem, ConnectionSourceAndDestinationEntities) {
     ASTNode tree = AST::parseFile(TESTS_SOURCE_DIR "validator/conn_entities.stride");
     ASSERT_TRUE(tree != nullptr);
 
-    auto propErrors = CodeValidator::findInvalidConnectionProperties(tree);
+    auto propErrors = ASTValidation::findInvalidConnectionProperties(tree);
     EXPECT_TRUE(propErrors.empty());
 
-    system.generateDomainConnections(tree);
+    DomainConnectionBuilder::generateDomainConnections(system, tree);
 
     std::vector<std::shared_ptr<StreamNode>> streams;
     std::shared_ptr<DeclarationNode> hostSenderDecl;

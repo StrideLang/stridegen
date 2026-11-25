@@ -37,15 +37,17 @@
 #include "stride/utils/astfunctions.h"
 #include "stride/utils/astquery.h"
 #include "stride/utils/astvalidation.h"
+#include "stride/utils/featureresolver.h"
 // #include "stride/stridegen/stridelibrary.hpp"
 
+#include <filesystem>
 #include <fstream>
 #include <functional>
 
 using namespace strd;
 
 std::string writeCodeToFile(std::string code) {
-  std::string fileName = "temp.stride";
+  std::string fileName = (std::filesystem::temp_directory_path() / "stridegen_test_temp.stride").string();
   std::ofstream output_file(fileName);
 
   EXPECT_TRUE(output_file.is_open());
@@ -1143,3 +1145,31 @@ SigX >> Sin@Poly5() >> SigZ;
   EXPECT_EQ(sinCount, 2);
 }
 
+
+TEST(FeatureResolverIntegrationTest, InjectionTimeImportFiltering) {
+  // Parse without running FeatureResolver first so ImportNodes keep _feature_condition
+  ASTNode tree = AST::parseFile(TESTS_SOURCE_DIR "features/conditional_imports.stride");
+  ASSERT_TRUE(tree != nullptr);
+
+  FeatureConfig config;
+  config.enabledFeatures.insert("Audio");
+
+  std::string strideroot = ASTFunctions::getDefaultStrideRoot();
+  CodeResolver resolver(tree, strideroot, SystemConfiguration(), config);
+
+  auto system = resolver.getSystem();
+  ASSERT_TRUE(system != nullptr);
+
+  auto imports = ASTQuery::getImportNodes(tree);
+  ASSERT_EQ(imports.size(), 3u);
+
+  std::vector<std::shared_ptr<ImportNode>> activeImports;
+  for (const auto &imp : imports) {
+    auto cond = imp->getCompilerProperty("_feature_condition");
+    if (!cond || FeatureResolver::isConditionMet(cond, config)) {
+      activeImports.push_back(imp);
+    }
+  }
+  ASSERT_EQ(activeImports.size(), 1u);
+  EXPECT_EQ(activeImports[0]->importName(), "AudioEffects");
+}

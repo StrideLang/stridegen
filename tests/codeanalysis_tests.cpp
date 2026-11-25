@@ -667,10 +667,10 @@ TEST(CodeAnalysis, StorageEntitiesAndSignalAccess) {
       "type", std::make_shared<EntityNode>("Int", __FILE__, __LINE__), __FILE__, __LINE__));
   auto signalDecl = std::make_shared<DeclarationNode>("MySignal", "signal", nullptr, __FILE__, __LINE__);
 
-  EXPECT_TRUE(CodeAnalysis::isStorageEntity(bufferDecl));
-  EXPECT_FALSE(CodeAnalysis::isStorageEntity(signalDecl));
+  EXPECT_TRUE(ASTQuery::isStorageEntity(bufferDecl));
+  EXPECT_FALSE(ASTQuery::isStorageEntity(signalDecl));
 
-  EXPECT_EQ(CodeAnalysis::getStorageElementDataType(bufferDecl), "Int");
+  EXPECT_EQ(ASTQuery::getStorageElementDataType(bufferDecl), "Int");
   EXPECT_EQ(CodeAnalysis::getDataTypeForDeclaration(bufferDecl, {}, nullptr), "Int");
 }
 
