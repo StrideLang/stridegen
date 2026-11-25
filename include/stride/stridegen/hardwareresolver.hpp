@@ -72,6 +72,10 @@ struct GpioField {
 struct GpioPort {
   std::string name;
   int index = 0;
+  // Base address, from `gpioPort GPIOA @ 0x40020000 { }`. A port with a base
+  // takes any register it leaves out from the device's `gpioLayout`, whose
+  // addresses are offsets from the base.
+  std::optional<int64_t> base;
   int width = 8;
   int64_t output = 0;
   int64_t input = 0;
@@ -162,6 +166,20 @@ struct PinAccess {
   bool openDrainEmulated = false;
 };
 
+// A peripheral instance of a device, e.g. `usart USART2 @ 0x40004400 { ... }`
+// in its `peripherals` list. Drivers and runtimes are written per `ip` (the
+// register-level design and version), never per chip.
+struct Peripheral {
+  std::string name;  // USART2
+  std::string kind;  // the entity type: usart, spi, i2c, ...
+  std::optional<int64_t> base;
+  std::string ip;    // e.g. "stm32.usart.v1"
+  std::string bus;   // clock feeding it, a name in the device's clocks: "apb1"
+  std::optional<int64_t> enableRegister;
+  int enableBit = 0;
+  std::shared_ptr<DeclarationNode> declaration;
+};
+
 struct RegisterWrite {
   int64_t address = 0;
   int width = 8;
@@ -213,6 +231,9 @@ public:
   std::vector<std::string> supportedValues(const BoardPin &pin,
                                            const std::string &option) const;
   bool hasLayer(const std::string &name) const;
+
+  std::vector<Peripheral> peripherals() const;
+  std::optional<Peripheral> peripheral(const std::string &name) const;
 
 private:
   friend class HardwareResolver;

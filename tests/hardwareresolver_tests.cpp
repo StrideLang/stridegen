@@ -559,6 +559,57 @@ TEST(HardwareResolver, GpioStm32StyleDevice) {
   EXPECT_EQ(mode.setBits, (1u << 10) | (2u << 18));
 }
 
+TEST(HardwareResolver, Stm32FamilyLayoutPeripheralsAndConsole) {
+  // STM32F4Discovery -> STM32F407VG -> STM32F4xx -> CortexM4. The family
+  // gives each port a base (@) and one gpioLayout of offsets; the chip adds
+  // only its memory.
+  HardwareResolver resolver(ASTFunctions::getDefaultStrideRoot());
+  std::string error;
+  auto disco = resolver.resolve("STM32F4", "STM32F4Discovery", &error);
+  ASSERT_TRUE(disco.has_value()) << error;
+  EXPECT_TRUE(disco->hasLayer("STM32F4xx"));
+  EXPECT_EQ(disco->stringProperty("fpu"), "fpv4-sp-d16");
+  EXPECT_EQ(disco->recordInt("memory", "ram").value_or(0), 131072);
+  EXPECT_EQ(disco->recordInt("clocks", "hse").value_or(0), 8000000);
+  EXPECT_EQ(disco->recordInt("clocks", "pllN").value_or(0), 336);
+
+  auto gpiod = disco->gpioPort("GPIOD");
+  ASSERT_TRUE(gpiod.has_value());
+  EXPECT_EQ(gpiod->base.value_or(0), 0x40020C00);
+  EXPECT_EQ(gpiod->width, 32);
+  EXPECT_EQ(gpiod->input, 0x40020C10);
+  EXPECT_EQ(gpiod->output, 0x40020C14);
+  EXPECT_EQ(gpiod->outputSet.value_or(0), 0x40020C18);
+  EXPECT_EQ(gpiod->clearShift, 16);
+  EXPECT_EQ(gpiod->enableRegister.value_or(0), 0x40023830);
+  EXPECT_EQ(gpiod->enableBit, 3);
+  ASSERT_EQ(gpiod->fields.size(), 3u);
+  EXPECT_EQ(gpiod->fields[0].reg, 0x40020C00); // MODER
+  EXPECT_EQ(gpiod->fields[2].reg, 0x40020C0C); // PUPDR
+
+  auto usart2 = disco->peripheral("USART2");
+  ASSERT_TRUE(usart2.has_value());
+  EXPECT_EQ(usart2->kind, "uart");
+  EXPECT_EQ(usart2->base.value_or(0), 0x40004400);
+  EXPECT_EQ(usart2->ip, "stm32.usart.v1");
+  EXPECT_EQ(usart2->bus, "apb1");
+  EXPECT_EQ(usart2->enableRegister.value_or(0), 0x40023840);
+  EXPECT_EQ(usart2->enableBit, 17);
+  EXPECT_FALSE(disco->peripheral("USART9").has_value());
+
+  // The console's pins are the runtime's, by any of their names.
+  auto led = gpioPin("Status", "LED", "PinOutput");
+  EXPECT_TRUE(HardwareResolver::checkGpioPins(*disco, {led}).empty());
+  EXPECT_TRUE(anyContains(
+      HardwareResolver::checkGpioPins(*disco,
+                                      {gpioPin("Out", "PA2", "PinOutput")}),
+      "reserves as the console's tx (USART2)"));
+  EXPECT_TRUE(anyContains(
+      HardwareResolver::checkGpioPins(*disco,
+                                      {gpioPin("In", "VCP_RX", "PinInput")}),
+      "console's rx"));
+}
+
 TEST(HardwareResolver, GpioProjectLayersInSearchDirectory) {
   ScratchRoot project;
   // An FPGA soft core whose AXI GPIO marks inputs with 1 in TRI, as a

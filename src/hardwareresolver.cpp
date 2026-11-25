@@ -429,6 +429,32 @@ void checkPinConflicts(const std::vector<GpioPinUse> &uses,
   }
 }
 
+// Pins the board gives to the runtime (its console's tx and rx) can't also be
+// gpioPins: the runtime would set them up for the console and the program's
+// setup would silently take them back.
+void checkReservedPins(const ResolvedHardware &hardware,
+                       const std::vector<GpioPinConfig> &pins,
+                       std::vector<GpioError> &errors) {
+  const std::string usart = hardware.recordString("console", "peripheral", "");
+  for (const char *role : {"tx", "rx"}) {
+    const std::string label = hardware.recordString("console", role, "");
+    auto reserved = label.empty() ? std::nullopt : hardware.boardPin(label);
+    if (!reserved) {
+      continue;
+    }
+    for (const auto &pin : pins) {
+      auto used = hardware.boardPin(pin.label);
+      if (used && used->port == reserved->port && used->bit == reserved->bit) {
+        errors.push_back(
+            {pin.file, pin.line,
+             "gpioPin " + pin.name + " uses " + pin.label + ", which " +
+                 hardware.name() + " reserves as the console's " + role +
+                 " (" + usart + ")"});
+      }
+    }
+  }
+}
+
 void emitInitialLevel(RegisterWritePlan &plan, const GpioPinConfig &pin,
                       const GpioPort &port, const PinAccess &access,
                       uint64_t pinMask) {
@@ -701,12 +727,49 @@ bool ResolvedHardware::hasLayer(const std::string &name) const {
                      });
 }
 
+std::vector<Peripheral> ResolvedHardware::peripherals() const {
+  std::vector<Peripheral> result;
+  for (const auto &item : listItems(property("peripherals"))) {
+    auto decl = asDeclaration(item);
+    if (!decl) {
+      continue;
+    }
+    Peripheral p;
+    p.name = decl->getName();
+    p.kind = decl->getEntityType();
+    p.base = intOf(decl->getCompilerProperty("_at"));
+    p.ip = ASTQuery::valueText(decl->getPropertyValue("ip"));
+    p.bus = ASTQuery::valueText(decl->getPropertyValue("bus"));
+    if (auto enable = decl->getPropertyValue("enable")) {
+      p.enableRegister = intOf(ASTQuery::recordValue(enable, "register"));
+      p.enableBit = static_cast<int>(
+          intOf(ASTQuery::recordValue(enable, "bit")).value_or(0));
+    }
+    p.declaration = decl;
+    result.push_back(std::move(p));
+  }
+  return result;
+}
+
+std::optional<Peripheral>
+ResolvedHardware::peripheral(const std::string &name) const {
+  for (auto &p : peripherals()) {
+    if (p.name == name) {
+      return p;
+    }
+  }
+  return std::nullopt;
+}
+
 void ResolvedHardware::ensureGpioCache() const {
   if (m_gpioCacheBuilt) {
     return;
   }
   m_gpioCacheBuilt = true;
 
+  // Registers shared by every port of the device, as offsets from a port's
+  // base: gpioLayout: { input: 0x10 output: 0x14 fields: [...] }.
+  const ASTNode layout = property("gpioLayout");
   int portIndex = 0;
   for (const auto &item : listItems(property("ports"))) {
     auto decl = asDeclaration(item);
@@ -716,40 +779,68 @@ void ResolvedHardware::ensureGpioCache() const {
     GpioPort port;
     port.name = decl->getName();
     port.index = portIndex++;
-    port.width =
-        static_cast<int>(intOf(decl->getPropertyValue("width")).value_or(8));
-    port.output = intOf(decl->getPropertyValue("output")).value_or(0);
-    port.input = intOf(decl->getPropertyValue("input")).value_or(0);
-    port.direction = intOf(decl->getPropertyValue("direction"));
-    port.outputSet = intOf(decl->getPropertyValue("outputSet"));
-    port.outputClear = intOf(decl->getPropertyValue("outputClear"));
-    port.outputToggle = intOf(decl->getPropertyValue("outputToggle"));
-    port.directionSet = intOf(decl->getPropertyValue("directionSet"));
-    port.directionClear = intOf(decl->getPropertyValue("directionClear"));
-    port.setShift =
-        static_cast<int>(intOf(decl->getPropertyValue("setShift")).value_or(0));
-    port.clearShift = static_cast<int>(
-        intOf(decl->getPropertyValue("clearShift")).value_or(0));
-    if (auto enable = decl->getPropertyValue("enable")) {
+    port.base = intOf(decl->getCompilerProperty("_at"));
+    const bool useLayout = port.base && layout;
+    // A value the port states, else the layout's.
+    auto value = [&](const std::string &key) -> ASTNode {
+      if (auto own = decl->getPropertyValue(key)) {
+        return own;
+      }
+      return useLayout ? ASTQuery::recordValue(layout, key) : nullptr;
+    };
+    // An address the port states, else base + the layout's offset.
+    auto address = [&](const ASTNode &own,
+                       const ASTNode &offset) -> std::optional<int64_t> {
+      if (auto v = intOf(own)) {
+        return v;
+      }
+      if (useLayout) {
+        if (auto off = intOf(offset)) {
+          return *port.base + *off;
+        }
+      }
+      return std::nullopt;
+    };
+    auto portAddress = [&](const std::string &key) {
+      return address(decl->getPropertyValue(key),
+                     useLayout ? ASTQuery::recordValue(layout, key) : nullptr);
+    };
+    port.width = static_cast<int>(intOf(value("width")).value_or(8));
+    port.output = portAddress("output").value_or(0);
+    port.input = portAddress("input").value_or(0);
+    port.direction = portAddress("direction");
+    port.outputSet = portAddress("outputSet");
+    port.outputClear = portAddress("outputClear");
+    port.outputToggle = portAddress("outputToggle");
+    port.directionSet = portAddress("directionSet");
+    port.directionClear = portAddress("directionClear");
+    port.setShift = static_cast<int>(intOf(value("setShift")).value_or(0));
+    port.clearShift = static_cast<int>(intOf(value("clearShift")).value_or(0));
+    if (auto enable = value("enable")) {
       port.enableRegister = intOf(ASTQuery::recordValue(enable, "register"));
       port.enableBit =
           static_cast<int>(intOf(ASTQuery::recordValue(enable, "bit"))
                                .value_or(0));
     }
-    port.driverAccess =
-        optionName(decl->getPropertyValue("access")) == "AccessDriver";
-    for (const auto &fieldItem : listItems(decl->getPropertyValue("fields"))) {
+    port.driverAccess = optionName(value("access")) == "AccessDriver";
+    // Fields the port lists are absolute; the layout's are offsets.
+    const bool ownFields = decl->getPropertyValue("fields") != nullptr;
+    for (const auto &fieldItem : listItems(value("fields"))) {
       auto fieldDecl = asDeclaration(fieldItem);
       if (!fieldDecl) {
         continue;
       }
+      auto fieldAddress = [&](const std::string &key) {
+        auto v = fieldDecl->getPropertyValue(key);
+        return ownFields ? intOf(v) : address(nullptr, v);
+      };
       GpioField field;
       field.name = fieldDecl->getName();
       field.file = fieldDecl->getFilename();
       field.line = fieldDecl->getLine();
       field.option = optionName(fieldDecl->getPropertyValue("option"));
-      field.reg = intOf(fieldDecl->getPropertyValue("register")).value_or(0);
-      field.regHigh = intOf(fieldDecl->getPropertyValue("registerHigh"));
+      field.reg = fieldAddress("register").value_or(0);
+      field.regHigh = fieldAddress("registerHigh");
       field.bitsPerPin = static_cast<int>(
           intOf(fieldDecl->getPropertyValue("bitsPerPin")).value_or(1));
       field.shift = static_cast<int>(
@@ -1148,6 +1239,7 @@ HardwareResolver::checkGpioPins(const ResolvedHardware &hardware,
     validateSinglePin(hardware, device, pin, errors, uses);
   }
   checkPinConflicts(uses, errors);
+  checkReservedPins(hardware, pins, errors);
   return errors;
 }
 
