@@ -33,6 +33,7 @@
 #include "stride/utils/astquery.h"
 #include "stride/utils/logger.h"
 
+#include <algorithm>
 #include <set>
 
 using namespace strd;

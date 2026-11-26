@@ -33,7 +33,8 @@ ASTNode makeZeroOrFalseForArrayDecl(const std::shared_ptr<DeclarationNode> &decl
                                     const ASTNode &locNode,
                                     const ScopeStack &scope,
                                     const ASTNode &tree) {
-  const char *file = locNode->getFilename().c_str();
+  const std::string fileName = locNode->getFilename();
+  const char *file = fileName.c_str();
   int line = locNode->getLine();
   if (decl) {
     if (decl->getEntityType() == "switch" ||
@@ -601,7 +602,8 @@ std::vector<ASTNode> StreamExpander::expandSingleIndexedStream(
   }
 
   auto tagParallelNode = [&](const ASTNode &target, int64_t index) {
-    const char *file = stream->getFilename().c_str();
+    const std::string fileName = stream->getFilename();
+    const char *file = fileName.c_str();
     int line = stream->getLine();
     target->setCompilerProperty(
         "_parallelGroup",

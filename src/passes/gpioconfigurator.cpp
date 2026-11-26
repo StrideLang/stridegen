@@ -420,7 +420,8 @@ void GpioConfigurator::processGpio() {
       kept.push_back(child);
     }
     func->setChildren(kept);
-    const char *file = func->getFilename().c_str();
+    const std::string fileName = func->getFilename();
+    const char *file = fileName.c_str();
     int line = func->getLine();
     auto setInt = [&](const char *key, int64_t value) {
       func->setPropertyValue(key,
