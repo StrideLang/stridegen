@@ -92,8 +92,12 @@ TEST(HardwareResolver, UnoResolvesBoardDeviceCore) {
   EXPECT_EQ(uno->entryInt("pins", "LED", "bit"), 5);
   EXPECT_EQ(uno->entryInt("pins", "A3", "adc"), 3);
   EXPECT_EQ(uno->entry("pins", "D20"), nullptr);
-  EXPECT_EQ(uno->recordString("upload", "method"), "avrdude");
-  EXPECT_EQ(uno->recordInt("upload", "baud"), 115200);
+  auto avrdude = uno->defaultFlasher();
+  ASSERT_TRUE(avrdude.has_value());
+  EXPECT_EQ(avrdude->kind, "avrdude");
+  EXPECT_EQ(avrdude->name, "Avrdude");
+  EXPECT_EQ(avrdude->string("programmer"), "arduino");
+  EXPECT_EQ(avrdude->integer("baud"), 115200);
   EXPECT_EQ(uno->recordString("toolchain", "cc"), "AvrGcc");
   EXPECT_TRUE(contains(uno->nameListProperty("usb"), "2341:0043"));
   EXPECT_EQ(uno->nameListProperty("image"), std::vector<std::string>{"Hex"});
@@ -171,27 +175,63 @@ TEST(HardwareResolver, SharedCoreIsTheFallback) {
   EXPECT_EQ(d->stringProperty("triple"), "shared");
 }
 
-TEST(HardwareResolver, NamedEntryReplacesEntryBelow) {
+TEST(HardwareResolver, NamedEntryMergesWithEntryBelow) {
   ScratchRoot root;
   root.write("platforms/P/boards/Base.stride",
              "hardwareBoard Base { platform: P overlays: none pins: [\n"
              "  pin D1 { port: \"B\" bit: 1 },\n"
-             "  pin LED { port: \"B\" bit: 5 }\n"
+             "  pin LED { port: \"B\" bit: 5 label: \"L\" },\n"
+             "  adcPin A0 { port: \"C\" bit: 0 adc: 0 }\n"
              "] }\n");
   root.write("platforms/P/boards/Clone.stride",
              "hardwareBoard Clone { platform: P overlays: Base pins: [\n"
              "  pin LED { port: \"D\" bit: 2 },\n"
-             "  pin D9 { port: \"C\" bit: 0 }\n"
+             "  pin D9 { port: \"C\" bit: 0 },\n"
+             "  pin A0 { port: \"C\" bit: 1 }\n"
              "] }\n");
   HardwareResolver resolver(root.path());
   std::string error;
   auto clone = resolver.resolve("P", "Clone", &error);
   ASSERT_TRUE(clone.has_value()) << error;
-  // Same order as the base, the replaced entry in its place, new ones last.
+  // Same order as the base, the merged entry in its place, new ones last.
   EXPECT_EQ(clone->nameListProperty("pins"),
-            (std::vector<std::string>{"D1", "LED", "D9"}));
+            (std::vector<std::string>{"D1", "LED", "A0", "D9"}));
+  // Same name and type: key by key, so the base's label stays.
   EXPECT_EQ(clone->entryString("pins", "LED", "port"), "D");
   EXPECT_EQ(clone->entryInt("pins", "LED", "bit"), 2);
+  EXPECT_EQ(clone->entryString("pins", "LED", "label"), "L");
+  // Same name, another type: replaced, so the base's adc is gone.
+  EXPECT_EQ(clone->entry("pins", "A0")->getEntityType(), "pin");
+  EXPECT_EQ(clone->entryInt("pins", "A0", "bit"), 1);
+  EXPECT_FALSE(clone->entryInt("pins", "A0", "adc").has_value());
+}
+
+TEST(HardwareResolver, FlashersMergeAcrossDeviceAndBoard) {
+  HardwareResolver resolver(ASTFunctions::getDefaultStrideRoot());
+  std::string error;
+  auto disco = resolver.resolve("STM32F4", "STM32F4Discovery", &error);
+  ASSERT_TRUE(disco.has_value()) << error;
+  // The family's target and the board's probe meet in one entry.
+  auto openocd = disco->defaultFlasher();
+  ASSERT_TRUE(openocd.has_value());
+  EXPECT_EQ(openocd->kind, "openocd");
+  EXPECT_EQ(openocd->string("target"), "target/stm32f4x.cfg");
+  EXPECT_EQ(openocd->string("interface"), "interface/stlink.cfg");
+  EXPECT_EQ(openocd->integer("speed"), 2000);
+  EXPECT_TRUE(openocd->flag("verify", true));
+  // The chip adds probe-rs.
+  auto probeRs = disco->flasher("probeRs");
+  ASSERT_TRUE(probeRs.has_value());
+  EXPECT_EQ(probeRs->string("chip"), "STM32F407VGTx");
+  EXPECT_EQ(disco->flashers().size(), 2u);
+
+  // A board names its default when the device lists other tools first.
+  auto pico = resolver.resolve("Pico", "RaspberryPiPico2", &error);
+  ASSERT_TRUE(pico.has_value()) << error;
+  ASSERT_TRUE(pico->defaultFlasher().has_value());
+  EXPECT_EQ(pico->defaultFlasher()->kind, "picotool");
+  EXPECT_EQ(pico->flasher("OpenOCD")->string("target"), "target/rp2350.cfg");
+  EXPECT_EQ(pico->flasher("OpenOCD")->string("transport"), "swd");
 }
 
 TEST(HardwareResolver, UnknownLayerIsAnError) {

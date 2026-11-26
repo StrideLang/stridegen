@@ -47,6 +47,8 @@ const char *hardwareKindName(HardwareKind kind) {
 namespace {
 
 ASTNode mergeValues(const ASTNode &base, const ASTNode &over);
+ASTNode mergeRecords(const std::shared_ptr<DeclarationNode> &base,
+                     const std::shared_ptr<DeclarationNode> &over);
 
 ASTNode mergeLists(const ASTNode &base, const ASTNode &over) {
   auto merged = base->deepCopy();
@@ -63,7 +65,17 @@ ASTNode mergeLists(const ASTNode &base, const ASTNode &over) {
     if (existing == items.end()) {
       items.push_back(item->deepCopy());
     } else if (item->getNodeType() == AST::Declaration) {
-      *existing = item->deepCopy();
+      // The same named entry of the same type in two layers (a device's
+      // `openocd OpenOCD { target: }` and its board's `openocd OpenOCD
+      // { interface: }`) merges key by key; a different type replaces it.
+      auto baseDecl = (*existing)->getNodeType() == AST::Declaration
+                          ? std::static_pointer_cast<DeclarationNode>(*existing)
+                          : nullptr;
+      auto overDecl = std::static_pointer_cast<DeclarationNode>(item);
+      *existing = (baseDecl &&
+                   baseDecl->getEntityType() == overDecl->getEntityType())
+                      ? mergeRecords(baseDecl, overDecl)
+                      : item->deepCopy();
     }
   }
   merged->setChildren(items);
@@ -759,6 +771,66 @@ ResolvedHardware::peripheral(const std::string &name) const {
     }
   }
   return std::nullopt;
+}
+
+std::string Flasher::string(const std::string &key,
+                            const std::string &defaultValue) const {
+  const std::string text =
+      declaration ? ASTQuery::valueText(declaration->getPropertyValue(key))
+                  : std::string();
+  return text.empty() ? defaultValue : text;
+}
+
+std::optional<int64_t> Flasher::integer(const std::string &key) const {
+  return declaration ? intOf(declaration->getPropertyValue(key))
+                     : std::nullopt;
+}
+
+bool Flasher::flag(const std::string &key, bool defaultValue) const {
+  auto value = declaration ? declaration->getPropertyValue(key) : nullptr;
+  if (value && value->getNodeType() == AST::Switch) {
+    return std::static_pointer_cast<ValueNode>(value)->getSwitchValue();
+  }
+  return defaultValue;
+}
+
+std::string Flasher::recordString(const std::string &record,
+                                  const std::string &key) const {
+  return declaration ? ASTQuery::valueText(ASTQuery::recordValue(
+                           declaration->getPropertyValue(record), key))
+                     : std::string();
+}
+
+std::vector<Flasher> ResolvedHardware::flashers() const {
+  std::vector<Flasher> result;
+  for (const auto &item : listItems(property("flashers"))) {
+    if (auto decl = asDeclaration(item)) {
+      result.push_back({decl->getName(), decl->getEntityType(), decl});
+    }
+  }
+  return result;
+}
+
+std::optional<Flasher>
+ResolvedHardware::flasher(const std::string &kindOrName) const {
+  for (auto &f : flashers()) {
+    if (f.kind == kindOrName || f.name == kindOrName) {
+      return f;
+    }
+  }
+  return std::nullopt;
+}
+
+std::optional<Flasher> ResolvedHardware::defaultFlasher() const {
+  const std::string chosen = stringProperty("defaultFlasher");
+  if (!chosen.empty()) {
+    return flasher(chosen);
+  }
+  auto all = flashers();
+  if (all.empty()) {
+    return std::nullopt;
+  }
+  return all.front();
 }
 
 void ResolvedHardware::ensureGpioCache() const {

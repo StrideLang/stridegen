@@ -180,6 +180,23 @@ struct Peripheral {
   std::shared_ptr<DeclarationNode> declaration;
 };
 
+// An entry of a board's `flashers` list (package Flasher), merged by name
+// across the device and board layers, e.g. `openocd OpenOCD { target:
+// interface: speed: }`. The kind is the tool; stridec runs it.
+struct Flasher {
+  std::string name; // OpenOCD
+  std::string kind; // the entity type: openocd, probeRs, picotool, avrdude, ...
+  std::shared_ptr<DeclarationNode> declaration;
+
+  std::string string(const std::string &key,
+                     const std::string &defaultValue = "") const;
+  std::optional<int64_t> integer(const std::string &key) const;
+  bool flag(const std::string &key, bool defaultValue) const;
+  // A value inside a record option, e.g. record("download", "windows").
+  std::string recordString(const std::string &record,
+                           const std::string &key) const;
+};
+
 struct RegisterWrite {
   int64_t address = 0;
   int width = 8;
@@ -234,6 +251,12 @@ public:
 
   std::vector<Peripheral> peripherals() const;
   std::optional<Peripheral> peripheral(const std::string &name) const;
+
+  std::vector<Flasher> flashers() const;
+  // The entry whose kind or name matches, e.g. flasher("openocd").
+  std::optional<Flasher> flasher(const std::string &kindOrName) const;
+  // The board's `defaultFlasher`, else the first entry.
+  std::optional<Flasher> defaultFlasher() const;
 
 private:
   friend class HardwareResolver;
